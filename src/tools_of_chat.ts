@@ -1,15 +1,15 @@
 // =====================================================================
-//  bridge/qqbot_patch.ts —— 对官方 dsh-qqbot 的源码 patch（显式发送架构）
+//  tools_of_chat.ts —— 用于赋予 AI 自由发送消息的能力
 //
-//  赋予 AI 自由发送消息的能力：阻止 QQ Bot 插件将 Assistant 文本自动
-//  发送到 QQ，并把发送 QQ 消息时机的控制权彻底交给 AI。
+//  阻止 QQ Bot 插件将 Assistant 文本自动发送到 QQ，并把发送 QQ 消息
+//  时机的控制权彻底交给 AI。
 //
 //  ！通过修改文件、注入插件源代码实现，需重启 DSH 生效。
 //  ！仅适配 @tencent-connect/dsh-qqbot@0.5.5，破坏性更新会导致失效。
 // =====================================================================
 
-import { SourcePatcher } from '../common/source_patcher.js';
-import { qqBotOutbound, qqBotBootstrap } from './paths.js';
+import { SourcePatcher } from './common/source_patcher.js';
+import { qqBotOutbound, qqBotBootstrap } from './bridge/paths.js';
 
 // 1. 抑制自动发送：在 route() 里丢弃自动输出事件。
 // 参见 dsh-qqbot@0.5.5 outbound.js 的 route 函数。

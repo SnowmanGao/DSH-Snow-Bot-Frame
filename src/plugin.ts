@@ -13,8 +13,9 @@ import { mkdir } from 'node:fs/promises';
 import { groupPrompt, QQ_DROP_SECTIONS, QQ_DROP_CONTEXTS, QQ_CONTEXT_COMPACT } from './prompt.js';
 import { type TulpaLiteConfig } from './config_schema.js';
 import { registerConfigRoutes } from './bridge/config_routes.js';
-import { applyPatches } from './bridge/qqbot_patch.js';
 import { openidForSessionId } from './bridge/qqbot_prefs.js';
+import { TulpaMcp } from './bridge/tulpa_mcp.js';
+import { applyPatches } from './tools_of_chat.js';
 import type { Agent, Ctx } from './common/dsh_types.js';
 import { trimAssemblySections, trimAssemblyContexts, keepByPrefix, compactByTransforms } from './common/prompt_trimmer.js';
 import { installToolsTrimmer } from './common/tools_trimmer.js';
@@ -40,8 +41,7 @@ function extractText(data: unknown): string {
 interface HookDeps {
   ctx: Ctx;
   ws: string;
-  bearer: string;
-  endpoint: string | undefined;
+  mcp: TulpaMcp;
   trimSections: string[];
   toolAllowlist: string[];
   resolver: GroupResolver;
@@ -53,7 +53,7 @@ type AgentHook = (agent: Agent, openid: string, deps: HookDeps) => void;
 //   工具：agent 作用域注册（仅本群会话可见，不进全局工具目录）；
 //   白名单：只保留配置的工具 + 本插件注入的工具。
 const historyToolsHook: AgentHook = (agent, openid, deps) => {
-  const defs = createHistoryTools(deps.bearer, deps.endpoint, openid, (o) => deps.resolver.resolve(o));
+  const defs = createHistoryTools(deps.mcp, openid, (o) => deps.resolver.resolve(o));
   const tools = agent.ctx?.tools;
   if (tools && typeof tools.register === 'function') {
     for (const def of defs) tools.register(def);
@@ -114,8 +114,11 @@ function apply(ctx: Ctx, config: TulpaLiteConfig) {
   const toolAllowlist = config.toolAllowlist.get();
   const patchEnabled = config.patchEnabled.get();
 
-  const resolver = new GroupResolver(bearer, endpoint);
-  const deps: HookDeps = { ctx, ws, bearer, endpoint, trimSections, toolAllowlist, resolver };
+  // 唯一的 Tulpa 连接入口：bearer/url 在此收敛，下游（GroupResolver、
+  // createHistoryTools、领域查询）一律收 TulpaMcp 实例，不再透传二元组。
+  const mcp = new TulpaMcp({ bearer, url: endpoint });
+  const resolver = new GroupResolver(mcp);
+  const deps: HookDeps = { ctx, ws, mcp, trimSections, toolAllowlist, resolver };
 
   // 在首个 QQ 群消息到达（即首个对话创建）时，
   // 用 workspaceRegistry 抢先创建名为 "QQAgent" 的 workspace，防止显示为 "未分组对话"
