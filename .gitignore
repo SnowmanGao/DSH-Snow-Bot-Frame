@@ -1,0 +1,11 @@
+# Dependencies
+node_modules/
+
+# Build output
+/dist/
+
+# Demo
+src/_dev_scripts/demo.ts
+
+# 暂时排除
+README.md

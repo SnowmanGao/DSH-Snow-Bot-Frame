@@ -1,0 +1,7 @@
+- insert:
+    - id: dsh-snow-bot-frame
+      name: dsh-snow-bot-frame
+      config:
+        workspace: 'E:/AgentGround/QQAgent'
+        tulpaUrl: 'http://127.0.0.1:18777/mcp'
+        tulpaBearer: ''

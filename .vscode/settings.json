@@ -1,0 +1,24 @@
+{
+    // 隐藏相关文件夹
+    "files.exclude": {
+        ".vscode": true,
+        ".workbuddy": true,
+        "dist": true,
+        "node_modules": true
+    },
+    // 拼写检查屏蔽
+    "cSpell.words": [
+        "chunker",
+        "cordis",
+        "deepseek",
+        "dowhen",
+        "gaogaotiantian",
+        "panellist",
+        "Prefs",
+        "qqbot",
+        "qqtool",
+        "schemastery",
+        "snowbot",
+        "Tulpa"
+    ]
+}
