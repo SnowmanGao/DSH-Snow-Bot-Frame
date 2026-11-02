@@ -14,6 +14,7 @@ import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'no
 import { dirname } from 'node:path';
 import { learnedGroupsFile } from './bridge/paths.js';
 import { listGroups, matchGroup } from './bridge/tulpa.js';
+import type { TulpaMcp } from './bridge/tulpa_mcp.js';
 
 export interface ResolvedGroup {
   conversationId: string;
@@ -66,10 +67,9 @@ function persistLearned() {
   } catch { /* 写失败不致命，下条消息会重新学习 */ }
 }
 
-// ---- 运行时解析器（每个 bearer/url 一个实例） ----
+// ---- 运行时解析器（每个 TulpaMcp 连接配置一个实例） ----
 class GroupResolver {
-  private bearer: string;
-  private url: string | undefined;
+  private mcp: TulpaMcp;
 
   // 待学习/学习中的 openid（去重并发）
   private pending = new Map<string, Promise<ResolvedGroup | undefined>>();
@@ -80,16 +80,15 @@ class GroupResolver {
   private namesFetchedAt = 0;
   private refreshing = false;
 
-  constructor(bearer: string, url?: string) {
-    this.bearer = bearer;
-    this.url = url;
+  constructor(mcp: TulpaMcp) {
+    this.mcp = mcp;
   }
 
   private async refreshNames() {
     if (this.refreshing || Date.now() - this.namesFetchedAt < 5 * 60_000) return;
     this.refreshing = true;
     try {
-      const groups = await listGroups(this.bearer, this.url);
+      const groups = await listGroups(this.mcp);
       const m = new Map<string, string>();
       for (const g of groups) m.set(g.groupId, g.groupName);
       this.nameCache = m;
@@ -111,7 +110,7 @@ class GroupResolver {
 
   // 学习：用最近一条消息去 Tulpa 配对，成功后落盘。
   private async learn(openid: string, text: string, time: number): Promise<ResolvedGroup | undefined> {
-    const hit = await matchGroup(this.bearer, this.url, text, time);
+    const hit = await matchGroup(this.mcp, text, time);
     if (!hit) return undefined;
     loadLearned().set(openid, { conversationId: hit.conversationId, groupId: hit.groupId, groupName: hit.groupName, learnedAt: Date.now() });
     persistLearned();

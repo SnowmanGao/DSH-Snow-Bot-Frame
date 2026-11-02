@@ -1,5 +1,5 @@
 // =====================================================================
-//  bridge/qqbot_prefs.ts —— 读取官方 dsh-qqbot 的会话偏好（openid ↔ 对话ID）
+//  qqbot_prefs.ts —— 读取官方 dsh-qqbot 的会话偏好（openid ↔ 对话ID）
 //
 //  dsh-qqbot 把 sessionKey `qqbot:<appId>:group:<groupOpenid>` → sessionId
 //  的映射持久化在 ~/.dsh-qqbot/model-prefs.json（resume/create 会话后落盘）。

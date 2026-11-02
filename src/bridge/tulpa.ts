@@ -1,20 +1,21 @@
 // =====================================================================
-//  bridge/tulpa.ts —— 本机 Tulpa 查询客户端（群清单 + 消息指纹匹配）
+//  bridge/tulpa.ts —— Tulpa 领域查询（群清单 + 消息指纹匹配）
 //
 //  数据源是 Tulpa 的 MCP 只读工具（list_conversations / read_conversation），
-//  这些工具直接查源库、无全量投影，适合高频/即时调用。
+//  这些工具直接查源库、无全量投影，适合高频即时调用。
 //
 //  「消息指纹配对」：QQ 机器人收到的群消息，靠「发送时间戳 + 内容」在
 //  Tulpa 里唯一匹配出所属群（openid ↔ 群号 之间没有官方直连，只能这样桥）。
+//
+//  连接由注入的 TulpaMcp 实例管理（每操作一连接），本模块只写查询逻辑。
 // =====================================================================
 
-import { connectorTransport } from './mcp_linker.js';
-import type { Transport } from '../common/dsh_types.js';
+import type { TulpaMcp } from './tulpa_mcp.js';
 
 export interface TulpaConversation {
   conversationId: string; // 1870893282:group:712941409
   groupId: string;        // 712941409
-  groupName: string;      // 未来⌬使徒⌬研究㍿
+  groupName: string;      // 群名称
 }
 
 // 匹配时间窗口（毫秒）：容忍 QQ 消息发送 → Tulpa 入库的延迟与时钟偏差。
@@ -36,16 +37,6 @@ function beijingTimeToMs(s: string): number | undefined {
   return Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) - 8 * 3600_000;
 }
 
-// 打开一个 Tulpa 连接并执行回调，最后自动关闭。
-async function withTulpa<T>(bearer: string, url: string | undefined, fn: (t: Transport) => Promise<T>): Promise<T> {
-  const t = await connectorTransport({ bearer, url });
-  try {
-    return await fn(t);
-  } finally {
-    await t.close().catch(() => { });
-  }
-}
-
 // 从 list_conversations 返回页里解析出 QQ 群清单（按群号去重）。
 function parseGroups(page: any): TulpaConversation[] {
   const out: TulpaConversation[] = [];
@@ -62,17 +53,17 @@ function parseGroups(page: any): TulpaConversation[] {
 }
 
 // 已授权的 QQ 群清单（含群名），按群号去重。
-async function listGroups(bearer: string, url: string | undefined): Promise<TulpaConversation[]> {
-  return withTulpa(bearer, url, async (t) => {
+function listGroups(mcp: TulpaMcp): Promise<TulpaConversation[]> {
+  return mcp.use(async (t) => {
     const page = await t.call('list_conversations', { platform: 'qq', limit: 20 });
     return parseGroups(page);
   });
 }
 
 // 消息指纹匹配：在时间窗口内，找「内容出现在 agentBody 里」的群，唯一才采信。
-async function matchGroup(bearer: string, url: string | undefined, agentBody: string, now: number): Promise<TulpaConversation | undefined> {
+function matchGroup(mcp: TulpaMcp, agentBody: string, now: number): Promise<TulpaConversation | undefined> {
   // 单连接完成「列群 + 逐群读最新消息」，避免为每个群重复建连。
-  return withTulpa(bearer, url, async (t) => {
+  return mcp.use(async (t) => {
     const page = await t.call('list_conversations', { platform: 'qq', limit: 20 });
     const groups = parseGroups(page);
     const hits: TulpaConversation[] = [];

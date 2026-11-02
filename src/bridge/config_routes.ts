@@ -1,5 +1,5 @@
 // =====================================================================
-//  bridge/config_routes.ts —— 配置面板数据通道（desktop 端专用）
+//  config_routes.ts —— 配置面板数据通道（desktop 端专用）
 //
 //  desktop 端（Electron）没有 configForms 服务（那是 web 端 ui-settings
 //  的客户端服务），所以配置面板不能像 web 端那样用 ctx.configForms 读写。

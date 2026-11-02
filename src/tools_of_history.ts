@@ -2,14 +2,13 @@
 //  tools_of_history.ts —— 群历史消息与上下文查询
 //
 //  本脚本用于弥补官方 QQ Bot 无法获取聊天历史的短板。
-//  让 AI 能读取当前群的近期消息、按条件检索历史、展开指定消息前后文
+//  使 AI 能读取当前群的近期消息、按条件检索历史、展开指定消息前后文
 //  并完整读取长消息，用于补充群聊上下文和理解讨论经过。
 // =====================================================================
 
 import { createHash } from 'node:crypto';
-import type { Transport } from './common/dsh_types.js';
+import type { McpClient, TulpaMcp } from './bridge/tulpa_mcp.js';
 import type { ResolvedGroup } from './group_resolver.js';
-import { connectorTransport } from './bridge/mcp_linker.js';
 import { historyDescriptions } from './prompt.js';
 
 const quote = (x: unknown) => `'${String(x).replaceAll("'", "''")}'`;
@@ -40,7 +39,7 @@ export interface HistoryMessage {
 
 class History {
   constructor(
-    private t: Transport,
+    private t: McpClient,
     private binding: { platform?: string; conversation_id: string; },
   ) {
     if (!binding.conversation_id) throw new Error('Trusted conversation binding required');
@@ -161,8 +160,7 @@ class History {
 
 // 4 个历史工具的完整定义：从 openid 解析所属群，走 Tulpa 读本群历史。
 function createHistoryTools(
-  bearer: string,
-  url: string | undefined,
+  mcp: TulpaMcp,
   openid: string,
   resolveGroup: (openid: string) => Promise<ResolvedGroup | undefined>,
 ) {
@@ -184,8 +182,8 @@ function createHistoryTools(
     const group = await resolveGroup(openid);
     if (!group) throw new Error('尚未识别出所属群（Tulpa 配对未成功），请稍后重试');
     const binding = { platform: 'qq', conversation_id: group.conversationId };
-    const t = await connectorTransport({ bearer, url });
-    try {
+    // 每操作一连接：mcp.use 负责握手与关闭。
+    return mcp.use(async (t) => {
       const h = new History(t, binding);
       switch (name) {
         case 'qqtool_get_recent_messages': return await h.recentMessages(args);
@@ -193,9 +191,7 @@ function createHistoryTools(
         case 'qqtool_get_message_context': return await h.messageContext(args);
         case 'qqtool_get_message': return await h.readMessage(args);
       }
-    } finally {
-      await t.close();
-    }
+    });
   };
 
   return (Object.keys(parameters) as ToolName[]).map(name => ({

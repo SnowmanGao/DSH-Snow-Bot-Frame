@@ -1,13 +1,5 @@
 // 运行时共享类型。宿主（DSH / cordis）内部结构不稳定，仅声明本插件用到的字段。
-
-// Tulpa 只读传输句柄
-export interface Transport {
-  serverName?: string;
-  call(name: string, args?: Record<string, unknown>): Promise<any>;
-  close(): Promise<void>;
-}
-
-export type TransportFactory = (opts?: { bearer: string; url?: string; }) => Promise<Transport>;
+// （MCP 客户端接口 McpClient 见 bridge/tulpa_mcp.ts）
 
 // 提示词组装对象（结构宽松，只关心 sections / tools）
 export interface Assembly {
