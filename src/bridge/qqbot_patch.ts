@@ -1,19 +1,19 @@
 // =====================================================================
-//  tools_of_chat.ts —— 用于赋予 AI 自由发送消息的能力
-// 
-//  本脚本用于阻止 QQ Bot 插件将 Assistant 文本自动发送到 QQ，并把
-//  发送 QQ 消息时机的控制权彻底交给 AI。
+//  bridge/qqbot_patch.ts —— 对官方 dsh-qqbot 的源码 patch（显式发送架构）
+//
+//  赋予 AI 自由发送消息的能力：阻止 QQ Bot 插件将 Assistant 文本自动
+//  发送到 QQ，并把发送 QQ 消息时机的控制权彻底交给 AI。
 //
 //  ！通过修改文件、注入插件源代码实现，需重启 DSH 生效。
 //  ！仅适配 @tencent-connect/dsh-qqbot@0.5.5，破坏性更新会导致失效。
 // =====================================================================
 
-import { SourcePatcher } from './common/source_patcher.js';
-import { qqBotOutbound, qqBotBootstrap } from './path.js';
+import { SourcePatcher } from '../common/source_patcher.js';
+import { qqBotOutbound, qqBotBootstrap } from './paths.js';
 
 // 1. 抑制自动发送：在 route() 里丢弃自动输出事件。
 // 参见 dsh-qqbot@0.5.5 outbound.js 的 route 函数。
-const NeverAutoSendPatcher = new SourcePatcher({
+const neverAutoSendPatcher = new SourcePatcher({
   file: qqBotOutbound,
   before: [
     '        const event = parseEvent(raw);',
@@ -33,7 +33,7 @@ const NeverAutoSendPatcher = new SourcePatcher({
 
 // 2. 注入文本发送工具：在 registerSendFileTool 之后注册 qqbot_send_message。
 // 复用同一作用域内的 sender（sendMarkdown，含被动回复限额兜底）、manager（findByAgent 定位回复目标）、config（textChunkLimit 分块阈值）。
-const AgentSendToolPatcher = new SourcePatcher({
+const agentSendToolPatcher = new SourcePatcher({
   file: qqBotBootstrap,
   before: '    registerSendFileTool(ctx, mediaSender, manager, config, logger);',
   after: `    registerSendFileTool(ctx, mediaSender, manager, config, logger);
@@ -93,4 +93,13 @@ const AgentSendToolPatcher = new SourcePatcher({
     }`,
 });
 
-export { NeverAutoSendPatcher, AgentSendToolPatcher };
+// 按 patchEnabled 统一注入/还原两个 patch（幂等）。
+function applyPatches(enabled: boolean): void {
+  const patchers = [neverAutoSendPatcher, agentSendToolPatcher];
+  for (const p of patchers) {
+    if (enabled) p.inject();
+    else p.revert();
+  }
+}
+
+export { neverAutoSendPatcher, agentSendToolPatcher, applyPatches };

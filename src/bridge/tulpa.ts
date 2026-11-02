@@ -1,5 +1,5 @@
 // =====================================================================
-//  tulpa.ts —— 本机 Tulpa 查询客户端（群清单 + 消息指纹匹配）
+//  bridge/tulpa.ts —— 本机 Tulpa 查询客户端（群清单 + 消息指纹匹配）
 //
 //  数据源是 Tulpa 的 MCP 只读工具（list_conversations / read_conversation），
 //  这些工具直接查源库、无全量投影，适合高频/即时调用。
@@ -9,7 +9,7 @@
 // =====================================================================
 
 import { connectorTransport } from './mcp_linker.js';
-import type { Transport } from './common/dsh_types.js';
+import type { Transport } from '../common/dsh_types.js';
 
 export interface TulpaConversation {
   conversationId: string; // 1870893282:group:712941409

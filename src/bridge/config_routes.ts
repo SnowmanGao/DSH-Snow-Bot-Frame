@@ -1,61 +1,29 @@
 // =====================================================================
-//  config_forms.ts —— 配置 Schema + 配置面板数据通道（desktop 端专用）
+//  bridge/config_routes.ts —— 配置面板数据通道（desktop 端专用）
 //
-//  一、配置 Schema（schemastery，供 DSH 宿主加载 / 类型约束用）
-//  二、配置面板数据通道：desktop 端（Electron）没有 configForms 服务（那
-//     是 web 端 ui-settings 的客户端服务），所以配置面板不能像 web 端那
-//     样用 ctx.configForms 读写。这里改走官方 desktop 插件（dsh-qqbot /
-//     dsh-desktop-settings）的成熟做法：host 侧在 ctx.webServer 上注册
-//     GET / POST 路由，client 侧用 fetch 相对路径读写，desktop 下由壳的
-//     IPC 桥自动转发到宿主。
+//  desktop 端（Electron）没有 configForms 服务（那是 web 端 ui-settings
+//  的客户端服务），所以配置面板不能像 web 端那样用 ctx.configForms 读写。
+//  这里改走官方 desktop 插件（dsh-qqbot / dsh-desktop-settings）的成熟做法：
+//  host 侧在 ctx.webServer 上注册 GET / POST 路由，client 侧用 fetch 相对
+//  路径读写，desktop 下由壳的 IPC 桥自动转发到宿主。
 //
 //  写回目标：profile 的 cordis.patch.yml（覆盖层），用「- id」条目覆盖
 //  bundle patch（cordis.patch.yml 的「- insert」条目）里的 config。
+//
+//  Config Schema 本体见 src/config_schema.ts。
 // =====================================================================
 
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import Schema from '@deepseek-ai/schemastery';
 import { isMap, isScalar, isSeq, parseDocument, YAMLMap } from 'yaml';
-import type { Ctx, Ref } from './common/dsh_types.js';
-import { desktopProfileDir } from './path.js';
+import type { Ctx } from '../common/dsh_types.js';
+import { desktopProfileDir } from './paths.js';
 
 // 插件在 profile 里的条目 id（与 cordis.patch.yml 的 insert id 一致）。
 const ENTRY_ID = 'dsh-snow-bot-frame';
 const CONFIG_PATH = '/snow-bot/config';
 
-
-// 供 GUI 渲染的配置 Schema。
-//
-// 关键：每个叶子字段都要标 .volatile()，DSH 的 SettingsForms 才会把本插件
-// 纳入「可配置条目」清单（volatileForm: schema 返回 undefined 的条目会被
-// 直接跳过，GUI 里不出现）。数组字段整体 volatile、元素字段不标，避免
-// 「volatile 嵌套 volatile」校验报错。宿主运行时通过可变引用传递这些字段，
-// 插件应使用 .get() 读取当前快照。
-const Config = Schema.object({
-  workspace: Schema.string().volatile(),
-  tulpaUrl: Schema.string().default('http://127.0.0.1:18777/mcp').volatile(),
-  tulpaBearer: Schema.string().volatile(),
-  trimSections: Schema.array(Schema.string()).default([]).volatile(),
-  toolAllowlist: Schema.array(Schema.string())
-    .default(['edit', 'glob', 'grep', 'pwsh', 'qqbot_send_file', 'qqbot_send_message', 'read', 'web_fetch', 'web_search', 'write'])
-    .volatile(),
-  patchEnabled: Schema.boolean().default(false).volatile(),
-});
-
-
-// 插件运行时配置（apply() 的 config 参数）
-interface TulpaLiteConfig {
-  workspace: Ref<string | undefined>; // 工作空间路径（无默认值，必填）
-  tulpaUrl: Ref<string>; // Tulpa MCP 端点（默认本机 loopback）
-  tulpaBearer: Ref<string | undefined>; // Tulpa MCP bearer 凭据（必填）
-  trimSections: Ref<string[]>;
-  toolAllowlist: Ref<string[]>; // 工具白名单：只保留这些工具 + 本插件注入的 qqtool 工具
-  patchEnabled: Ref<boolean>; // 源码 patch 注入状态：true = 已注入，false = 未注入
-}
-
-
-// 配置字段校验（对齐 Config schema 字段），非法返回 null。
+// 配置字段校验（对齐 config_schema.ts 的 Config 字段），非法返回 null。
 function validateConfig(value: unknown): Record<string, unknown> | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const src = value as Record<string, unknown>;
@@ -171,5 +139,4 @@ function registerConfigRoutes(ctx: Ctx, getConfig: () => Record<string, unknown>
   });
 }
 
-
-export { Config, TulpaLiteConfig, registerConfigRoutes };
+export { registerConfigRoutes };

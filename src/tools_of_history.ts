@@ -8,6 +8,9 @@
 
 import { createHash } from 'node:crypto';
 import type { Transport } from './common/dsh_types.js';
+import type { ResolvedGroup } from './group_resolver.js';
+import { connectorTransport } from './bridge/mcp_linker.js';
+import { historyDescriptions } from './prompt.js';
 
 const quote = (x: unknown) => `'${String(x).replaceAll("'", "''")}'`;
 
@@ -156,4 +159,52 @@ class History {
   }
 }
 
-export { History };
+// 4 个历史工具的完整定义：从 openid 解析所属群，走 Tulpa 读本群历史。
+function createHistoryTools(
+  bearer: string,
+  url: string | undefined,
+  openid: string,
+  resolveGroup: (openid: string) => Promise<ResolvedGroup | undefined>,
+) {
+  const str = { type: 'string' };
+  const int = { type: 'integer' };
+  const output = { schema: { type: 'json' }, render: (_args: unknown, value: unknown) => [{ type: 'text', text: JSON.stringify(value) }] };
+  const object = (properties: Record<string, unknown>, required?: string[]) =>
+    ({ type: 'object', properties, ...(required ? { required } : {}), additionalProperties: false });
+
+  const parameters = {
+    qqtool_get_recent_messages: object({ limit: int, cursor: str }),
+    qqtool_search_messages: object({ start: str, end: str, sender: str, keyword: str, limit: int, cursor: str }),
+    qqtool_get_message_context: object({ id: int, before: int, after: int }, ['id']),
+    qqtool_get_message: object({ id: int }, ['id']),
+  };
+  type ToolName = keyof typeof parameters;
+
+  const run = async (name: ToolName, args: any) => {
+    const group = await resolveGroup(openid);
+    if (!group) throw new Error('尚未识别出所属群（Tulpa 配对未成功），请稍后重试');
+    const binding = { platform: 'qq', conversation_id: group.conversationId };
+    const t = await connectorTransport({ bearer, url });
+    try {
+      const h = new History(t, binding);
+      switch (name) {
+        case 'qqtool_get_recent_messages': return await h.recentMessages(args);
+        case 'qqtool_search_messages': return await h.searchMessages(args);
+        case 'qqtool_get_message_context': return await h.messageContext(args);
+        case 'qqtool_get_message': return await h.readMessage(args);
+      }
+    } finally {
+      await t.close();
+    }
+  };
+
+  return (Object.keys(parameters) as ToolName[]).map(name => ({
+    name,
+    description: historyDescriptions[name],
+    parameters: parameters[name],
+    output,
+    async execute(args: any) { return run(name, args); },
+  }));
+}
+
+export { History, createHistoryTools };

@@ -1,12 +1,12 @@
 // =====================================================================
-//  mcp_linker.ts —— 本机 Tulpa MCP 连接与工具调用
+//  bridge/mcp_linker.ts —— 本机 Tulpa MCP 连接与工具调用
 //
 //  凭据（bearer）与地址由配置面板（configForm）提供，不再读取任何
 //  DSH 连接存储文件。严格限制为 127.0.0.1/localhost HTTP 端点。
 //  该模块负责 JSON-RPC 初始化、会话维护、工具调用与响应解析。
 // =====================================================================
 
-import type { Transport } from './common/dsh_types.js';
+import type { Transport } from '../common/dsh_types.js';
 
 // 只连本机 loopback Tulpa；bearer/url 由调用方（配置面板）提供。
 async function connectorTransport(opts: { bearer: string; url?: string }): Promise<Transport> {

@@ -1,5 +1,5 @@
 // =====================================================================
-//  qqbot_prefs.ts —— 读取官方 dsh-qqbot 的会话偏好（openid ↔ 对话ID）
+//  bridge/qqbot_prefs.ts —— 读取官方 dsh-qqbot 的会话偏好（openid ↔ 对话ID）
 //
 //  dsh-qqbot 把 sessionKey `qqbot:<appId>:group:<groupOpenid>` → sessionId
 //  的映射持久化在 ~/.dsh-qqbot/model-prefs.json（resume/create 会话后落盘）。
@@ -8,7 +8,7 @@
 // =====================================================================
 
 import { readFileSync, statSync } from 'node:fs';
-import { qqbotPrefs } from './path.js';
+import { qqbotPrefs } from './paths.js';
 
 let cachedMtime = 0;
 let cachedMap = new Map<string, string>(); // openid → sessionId（仅群聊）
