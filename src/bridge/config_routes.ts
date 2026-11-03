@@ -35,11 +35,6 @@ function validateConfig(value: unknown): Record<string, unknown> | null {
     out[key] = src[key];
   }
 
-  if (src.trimSections !== undefined) {
-    if (!Array.isArray(src.trimSections) || src.trimSections.some((s) => typeof s !== 'string')) return null;
-    out.trimSections = src.trimSections;
-  }
-
   if (src.toolAllowlist !== undefined) {
     if (!Array.isArray(src.toolAllowlist) || src.toolAllowlist.some((s) => typeof s !== 'string')) return null;
     out.toolAllowlist = src.toolAllowlist;

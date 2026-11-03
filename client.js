@@ -69,7 +69,6 @@ window.__ModuleLoader__.load({
         tulpaUrl: value.tulpaUrl ?? '',
         tulpaBearer: value.tulpaBearer ?? '',
         learned: value.learned ?? [],
-        trimSections: (value.trimSections ?? []).join('\n'),
         toolAllowlist: (value.toolAllowlist ?? []).join('\n'),
         patchEnabled: !!value.patchEnabled,
       };
@@ -106,8 +105,6 @@ window.__ModuleLoader__.load({
       'tulpaBearer.hint': 'Tulpa MCP 的 bearer token（在 Tulpa 里重新授权后粘贴到这里）。',
       'learned.label': '已自动配对的群（openid → 群，只读）',
       'learned.empty': '尚无。发一条群消息即可自动学习配对。',
-      'trimSections.label': '提示词删减块',
-      'trimSections.hint': '每行一个 section 名，精确匹配删除整块；以 * 结尾表示前缀匹配（如 harness:*）。',
       'toolAllowlist.label': '工具白名单',
       'toolAllowlist.hint': '每行一个工具名，只保留这些工具；本插件注入的 qqtool 历史工具始终保留。qqbot_send_message（发文本）与 qqbot_send_file（发文件）需在此列出，AI 才能发言。',
       'patchEnabled.label': '源码补丁（必须保持打开状态！）',
@@ -173,7 +170,6 @@ window.__ModuleLoader__.load({
         const set = (k, v) => setDraft({ ...draft, [k]: v });
 
         const save = async () => {
-          const trimSections = draft.trimSections.split('\n').map((s) => s.trim()).filter(Boolean);
           const toolAllowlist = draft.toolAllowlist.split('\n').map((s) => s.trim()).filter(Boolean);
           setBusy(true);
           setNote(null);
@@ -182,7 +178,6 @@ window.__ModuleLoader__.load({
               workspace: draft.workspace,
               tulpaUrl: draft.tulpaUrl,
               tulpaBearer: draft.tulpaBearer,
-              trimSections,
               toolAllowlist,
               patchEnabled: draft.patchEnabled,
             });
@@ -207,8 +202,6 @@ window.__ModuleLoader__.load({
             h('input', { className: 'sb-input', type: 'password', value: draft.tulpaBearer, onChange: (e) => set('tulpaBearer', e.target.value) })),
           h(Field, { label: t('learned.label') },
             h('pre', { className: 'sb-pre' }, learnedText)),
-          h(Field, { label: t('trimSections.label'), hint: t('trimSections.hint') },
-            h('textarea', { className: 'sb-textarea', rows: 5, value: draft.trimSections, onChange: (e) => set('trimSections', e.target.value) })),
           h(Field, { label: t('toolAllowlist.label'), hint: t('toolAllowlist.hint') },
             h('textarea', { className: 'sb-textarea', rows: 5, value: draft.toolAllowlist, onChange: (e) => set('toolAllowlist', e.target.value) })),
           h(Field, { label: t('patchEnabled.label'), hint: t('patchEnabled.hint') },
