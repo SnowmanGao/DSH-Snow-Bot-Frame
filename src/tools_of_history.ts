@@ -9,23 +9,8 @@
 import { createHash } from 'node:crypto';
 import type { McpClient, TulpaMcp } from './bridge/tulpa_mcp.js';
 import type { ResolvedGroup } from './group_resolver.js';
-import { historyDescriptions } from './prompt.js';
+import { historyToolPrompts } from './prompt.js';
 
-const quote = (x: unknown) => `'${String(x).replaceAll("'", "''")}'`;
-
-function number(x: unknown, fallback: number, max = 32): number {
-  const v = (x ?? fallback) as number;
-  if (!Number.isInteger(v) || v < 0 || v > max) throw new Error('Integer parameter out of range');
-  return v;
-}
-
-function date(x: string | undefined, end = false): number | null {
-  if (!x) return null;
-  if (!/^\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2})?$/.test(x)) throw new Error('Use Beijing YYYY-MM-DD or YYYY-MM-DD HH:MM');
-  const ms = Date.parse(x.replace(' ', 'T') + (x.length === 10 ? 'T00:00:00' : ':00') + '+08:00');
-  if (!Number.isFinite(ms)) throw new Error('Invalid date');
-  return ms + (end && x.length === 10 ? 86400000 : 0);
-}
 
 export interface HistoryMessage {
   id: number;
@@ -37,7 +22,7 @@ export interface HistoryMessage {
   [k: string]: unknown;
 }
 
-class History {
+class HistoryUtil {
   constructor(
     private t: McpClient,
     private binding: { platform?: string; conversation_id: string; },
@@ -166,9 +151,9 @@ function createHistoryTools(
 ) {
   const str = { type: 'string' };
   const int = { type: 'integer' };
-  const output = { schema: { type: 'json' }, render: (_args: unknown, value: unknown) => [{ type: 'text', text: JSON.stringify(value) }] };
+  const output = { schema: { type: 'object', additionalProperties: true }, render: (_args: unknown, value: unknown) => [{ type: 'text', text: JSON.stringify(value) }] };
   const object = (properties: Record<string, unknown>, required?: string[]) =>
-    ({ type: 'object', properties, ...(required ? { required } : {}), additionalProperties: false });
+  ({ type: 'object', properties, ...(required ? { required } : {}), additionalProperties: false });
 
   const parameters = {
     qqtool_get_recent_messages: object({ limit: int, cursor: str }),
@@ -184,7 +169,7 @@ function createHistoryTools(
     const binding = { platform: 'qq', conversation_id: group.conversationId };
     // 每操作一连接：mcp.use 负责握手与关闭。
     return mcp.use(async (t) => {
-      const h = new History(t, binding);
+      const h = new HistoryUtil(t, binding);
       switch (name) {
         case 'qqtool_get_recent_messages': return await h.recentMessages(args);
         case 'qqtool_search_messages': return await h.searchMessages(args);
@@ -196,11 +181,28 @@ function createHistoryTools(
 
   return (Object.keys(parameters) as ToolName[]).map(name => ({
     name,
-    description: historyDescriptions[name],
+    description: historyToolPrompts[name],
     parameters: parameters[name],
     output,
     async execute(args: any) { return run(name, args); },
   }));
 }
 
-export { History, createHistoryTools };
+const quote = (x: unknown) => `'${String(x).replaceAll("'", "''")}'`;
+
+function number(x: unknown, fallback: number, max = 32): number {
+  const v = (x ?? fallback) as number;
+  if (!Number.isInteger(v) || v < 0 || v > max) throw new Error('Integer parameter out of range');
+  return v;
+}
+
+function date(x: string | undefined, end = false): number | null {
+  if (!x) return null;
+  if (!/^\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2})?$/.test(x)) throw new Error('Use Beijing YYYY-MM-DD or YYYY-MM-DD HH:MM');
+  const ms = Date.parse(x.replace(' ', 'T') + (x.length === 10 ? 'T00:00:00' : ':00') + '+08:00');
+  if (!Number.isFinite(ms)) throw new Error('Invalid date');
+  return ms + (end && x.length === 10 ? 86400000 : 0);
+}
+
+
+export { HistoryUtil, createHistoryTools };

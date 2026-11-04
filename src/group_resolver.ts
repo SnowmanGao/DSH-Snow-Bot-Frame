@@ -67,6 +67,17 @@ function persistLearned() {
   } catch { /* 写失败不致命，下条消息会重新学习 */ }
 }
 
+// 清空已学习的 openid → 群 映射（配置面板「重置可用群聊」按钮调用）。
+// 同时清掉模块级缓存，下一条群消息会触发重新配对。
+function resetLearnedGroups(): void {
+  cachedMap = new Map();
+  try {
+    mkdirSync(dirname(learnedGroupsFile), { recursive: true });
+    writeFileSync(learnedGroupsFile, JSON.stringify({ groups: {} }, null, 2), 'utf8');
+    cachedMtime = statSync(learnedGroupsFile).mtimeMs;
+  } catch { /* 写失败不致命，内存缓存已清空，仍会重新学习 */ }
+}
+
 // ---- 运行时解析器（每个 TulpaMcp 连接配置一个实例） ----
 class GroupResolver {
   private mcp: TulpaMcp;
@@ -143,4 +154,4 @@ class GroupResolver {
   }
 }
 
-export { GroupResolver };
+export { GroupResolver, resetLearnedGroups };

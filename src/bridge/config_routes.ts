@@ -16,6 +16,9 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { isMap, isScalar, isSeq, parseDocument, YAMLMap } from 'yaml';
+import { TULPA_DEFAULT_URL } from '../config_schema.js';
+import { DEFAULT_TOOLS_ALLOWLIST } from '../prompt.js';
+import { resetLearnedGroups } from '../group_resolver.js';
 import type { Ctx } from '../common/dsh_types.js';
 import { desktopProfileDir } from './paths.js';
 
@@ -113,6 +116,41 @@ function registerConfigRoutes(ctx: Ctx, getConfig: () => Record<string, unknown>
           sendJson(res, 400, { ok: false, error: '请求体必须是合法 JSON' });
           return;
         }
+
+        // 重置动作：读当前生效配置 → 改目标字段 → 全量写回（learned 是运行时数据，不写回）。
+        if (body !== null && typeof body === 'object' && typeof (body as any).action === 'string') {
+          const action = (body as any).action as string;
+          if (action === 'resetGroups') {
+            resetLearnedGroups();
+            sendJson(res, 200, { ok: true, config: getConfig() });
+            return;
+          }
+          if (action !== 'resetTulpa' && action !== 'resetAllowlist') {
+            sendJson(res, 400, { ok: false, error: '未知重置动作' });
+            return;
+          }
+          const current = getConfig() as Record<string, unknown>;
+          const next: Record<string, unknown> = {
+            workspace: current.workspace,
+            tulpaUrl: current.tulpaUrl,
+            tulpaBearer: current.tulpaBearer,
+            toolAllowlist: current.toolAllowlist,
+            patchEnabled: current.patchEnabled,
+          };
+          if (action === 'resetTulpa') {
+            next.tulpaUrl = TULPA_DEFAULT_URL;
+            next.tulpaBearer = '';
+          } else {
+            next.toolAllowlist = DEFAULT_TOOLS_ALLOWLIST;
+          }
+          if (!writeProfileConfig(next)) {
+            sendJson(res, 500, { ok: false, error: '写入 cordis.patch.yml 失败' });
+            return;
+          }
+          sendJson(res, 200, { ok: true, config: { ...next, learned: getConfig().learned } });
+          return;
+        }
+
         const validated = validateConfig(body);
         if (validated === null) {
           sendJson(res, 400, { ok: false, error: '配置字段类型不合法' });

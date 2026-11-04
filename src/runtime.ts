@@ -8,7 +8,7 @@
 // =====================================================================
 
 import { mkdir } from 'node:fs/promises';
-import { groupPrompt, QQ_DROP_SECTIONS, QQ_DROP_CONTEXTS, QQ_CONTEXT_COMPACT } from './prompt.js';
+import { systemPromptBuilder, SECTIONS_TO_DROP, CONTEXTS_TO_DROP, CONTEXT_TO_COMPACT } from './prompt.js';
 import { openidForSessionId } from './bridge/qqbot_prefs.js';
 import type { Agent, Ctx } from './common/dsh_types.js';
 import { trimAssemblySections, trimAssemblyContexts, keepByPrefix, compactByTransforms } from './common/prompt_trimmer.js';
@@ -30,7 +30,7 @@ function extractText(data: unknown): string {
 }
 
 
-// ---- agent 挂钩 ----
+// ========================== Agent 挂钩 ==========================
 // 每个挂钩拿到 (agent, openid, deps)；事件主流程不感知具体能力。
 
 // 传递给挂钩的装配期依赖。
@@ -75,10 +75,10 @@ const promptHook: AgentHook = (agent, openid, deps) => {
       } catch { /* 标题服务不可用时跳过 */ }
     }
 
-    const sections = trimAssemblySections(assembled.sections, QQ_DROP_SECTIONS);
+    const sections = trimAssemblySections(assembled.sections, SECTIONS_TO_DROP);
     const keptSections = keepByPrefix(sections, 'tool:', deps.cfg.toolAllowlist);
-    const contexts = compactByTransforms(trimAssemblyContexts(assembled.contexts, QQ_DROP_CONTEXTS), QQ_CONTEXT_COMPACT);
-    const text = groupPrompt(group, deps.cfg.ws);
+    const contexts = compactByTransforms(trimAssemblyContexts(assembled.contexts, CONTEXTS_TO_DROP), CONTEXT_TO_COMPACT);
+    const text = systemPromptBuilder(group, deps.cfg.ws);
     return {
       ...assembled,
       sections: [...(keptSections ?? []), { name: 'qq-group:context', order: 90, text }],
@@ -91,7 +91,7 @@ const promptHook: AgentHook = (agent, openid, deps) => {
 const agentHooks: AgentHook[] = [historyToolsHook, promptHook];
 
 
-// ---- 会话运行时 ----
+// ========================== 会话运行时 ==========================
 
 // 一次 apply 装配出的运行时状态（index.ts 创建并传入事件处理器）。
 interface Runtime {
@@ -118,7 +118,7 @@ async function ensureWorkspace(rt: Runtime, sessionId: string): Promise<void> {
   } catch (e) { rt.deps.ctx.logger?.warn?.(`[snow-bot] 会话 ${sessionId} 归入工作区失败：${String(e)}`); }
 }
 
-// session/event 入口：识别 QQ 群会话（prefs 反向查 openid），
+// 事件回调：识别 QQ 群会话（prefs 反向查 openid），
 // 首条消息时挂载挂钩；此后每轮把最新消息喂给解析器（供学习）。
 function onSessionEvent(rt: Runtime, session: any, event: any) {
   if (event?.type !== 'user/message' || event?.surfaceOp !== 'append') return;

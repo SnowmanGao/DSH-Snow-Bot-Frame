@@ -34,14 +34,20 @@ window.__ModuleLoader__.load({
       .sb-textarea { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; resize: vertical; }
       .sb-pre { margin: 0; padding: 8px 10px; font-size: 12px; line-height: 1.6; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--dsw-alias-label-secondary, #555); background: var(--dsw-alias-bg-layer-2, #fafafa); border: 1px solid var(--dsw-alias-border-l3, #e4e4e4); border-radius: 6px; white-space: pre-wrap; word-break: break-all; }
       .sb-check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--dsw-alias-label-primary, #1a1a1a); cursor: pointer; border: 1px solid var(--dsw-alias-border-l3, #d4d4d4); background: #ffeb9a }
-      .sb-foot { margin-top: 20px; display: flex; align-items: center; gap: 12px; }
+      .sb-foot { margin-top: 20px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+      .sb-foot-reset { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+      .sb-foot-save { display: flex; align-items: center; gap: 12px; }
+      .sb-reset { padding: 6px 12px; font-size: 12px; cursor: pointer; border: 1px solid var(--dsw-alias-border-l3, #d4d4d4); border-radius: 6px; background: transparent; color: var(--dsw-alias-label-secondary, #555); }
+      .sb-reset:hover:not(:disabled) { border-color: var(--dsw-alias-state-error-primary, #d3382b); color: var(--dsw-alias-state-error-primary, #d3382b); }
+      .sb-reset:disabled { opacity: 0.5; cursor: not-allowed; }
       .sb-save { padding: 8px 18px; font-size: 13px; cursor: pointer; border: 0; border-radius: 6px; background: var(--dsw-alias-brand-primary, #4f6ef7); color: #fff; }
       .sb-save:disabled { opacity: 0.5; cursor: not-allowed; }
       .sb-note { font-size: 12px; color: var(--dsw-alias-label-tertiary, #888); }
       .sb-note--err { color: var(--dsw-alias-state-error-primary, #d3382b); }
+      .sb-note--warn { color: var(--dsw-alias-state-warn-primary, #e67e22); }
       .sb-main { height: 100%; overflow: auto; }
-      .sb-main-inner { max-width: 960px; padding: 32px 24px; margin: 0 auto; }
-      .sb-title { font-size: 20px; font-weight: 400; line-height: 1.4; color: var(--dsw-alias-label-primary, #1a1a1a); margin-bottom: 20px; }
+      .sb-main-inner { max-width: 960px; margin: 0 auto; padding: 28px clamp(24px, 4vw, 48px) 48px; }
+      .sb-title { font-size: 20px; font-weight: 500; line-height: 28px; color: var(--dsw-alias-label-primary, #1a1a1a); margin-bottom: 24px; }
     `;
 
     function installStyles() {
@@ -98,24 +104,31 @@ window.__ModuleLoader__.load({
       'title': '雪人框架',
       'sidebar.label': '雪人框架',
       'workspace.label': '工作空间文件夹路径',
-      'workspace.hint': '群记忆文件与各群工作目录的根目录（<workspace>/groups/<群号>）。',
+      'workspace.hint': '群记忆文件与各群工作目录的根目录（例如：D:/QQ_Bot/Agent，建议为英文路径）。',
       'tulpaUrl.label': 'Tulpa MCP 地址',
-      'tulpaUrl.hint': '本机 Tulpa 的 streamable-http 端点，默认 http://127.0.0.1:18777/mcp。',
-      'tulpaBearer.label': 'Tulpa Bearer 凭据',
-      'tulpaBearer.hint': 'Tulpa MCP 的 bearer token（在 Tulpa 里重新授权后粘贴到这里）。',
-      'learned.label': '已自动配对的群（openid → 群，只读）',
-      'learned.empty': '尚无。发一条群消息即可自动学习配对。',
-      'toolAllowlist.label': '工具白名单',
-      'toolAllowlist.hint': '每行一个工具名，只保留这些工具；本插件注入的 qqtool 历史工具始终保留。qqbot_send_message（发文本）与 qqbot_send_file（发文件）需在此列出，AI 才能发言。',
-      'patchEnabled.label': '源码补丁（必须保持打开状态！）',
-      'patchEnabled.hint': '开启后抑制 QQ Bot 插件自动发送功能，便于由 AI 控制发送消息的时机。切换后需重启 DSH 生效。',
+      'tulpaUrl.hint': '本机 Tulpa 的 streamable-http 端点（默认为：http://127.0.0.1:18777/mcp）。',
+      'tulpaBearer.label': 'Tulpa MCP Bearer 凭据',
+      'tulpaBearer.hint': '本机 Tulpa 的 MCP bearer 凭据 （在 Tulpa 里授权后粘贴到这里）。',
+      'learned.label': '已配对成功的群聊（只读）',
+      'learned.empty': '（暂无可用群聊，在群里 @<机器人> 发送任意消息以开始配对）',
+      'toolAllowlist.label': 'QQ Bot 可用工具白名单',
+      'toolAllowlist.hint': '每行一个工具 ID，此处声明的工具才能被 Bot 使用（注：本插件注入的工具不受影响；"qqbot_send_file" 为 qq_bot 官方插件注册，建议保留声明）。',
+      'patchEnabled.label': '源码补丁（！必须勾选！）',
+      'patchEnabled.hint': '开启后抑制官方 dsh_qq_bot 插件自动发送消息，发送消息的时机交由 AI 控制。切换、保存后需重启 DSH 生效。',
       'patchEnabled.option': '注入补丁',
       'save': '保存',
       'saving': '保存中…',
       'loading': '加载中…',
       'loadFailed': '加载配置失败：',
       'saveFailed': '保存失败：',
-      'saved': '配置已保存，重启 DSH 生效',
+      'saved': '配置已保存，请立即重启 DSH 生效。',
+      'resetTulpa': '重置 Tulpa MCP 设置',
+      'resetAllowlist': '重置工具白名单',
+      'resetGroups': '重置可用群聊',
+      'resetConfirmTulpa': '确定重置 Tulpa MCP 设置吗？地址将恢复默认，Bearer 凭据将被清空，需重新授权。',
+      'resetConfirmAllowlist': '确定把工具白名单重置为默认值吗？',
+      'resetConfirmGroups': '确定清空已配对的群聊吗？清空后需重新在群里发消息配对。',
+      'resetDone': '已重置，请立即重启 DSH 生效。',
     };
 
     // 侧边栏入口图标（雪花）。宿主传入 size：展开 18、收起 16；currentColor 跟随侧栏配色与选中态。
@@ -189,6 +202,27 @@ window.__ModuleLoader__.load({
           }
         };
 
+        const reset = async (action, confirmText) => {
+          if (typeof window.confirm === 'function' && !window.confirm(confirmText)) return;
+          setBusy(true);
+          setNote(null);
+          try {
+            const res = await fetch(CONFIG_PATH, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ action }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.ok) throw new Error(data.error || 'HTTP ' + res.status);
+            setDraft(fromValue(data.config || {}));
+            setNote({ ok: true, text: t('resetDone') });
+          } catch (e) {
+            setNote({ ok: false, text: t('saveFailed') + e.message });
+          } finally {
+            setBusy(false);
+          }
+        };
+
         const learnedText = draft.learned.length
           ? draft.learned.map((d) => `${d.groupName}（群号 ${d.groupId}）`).join('\n')
           : t('learned.empty');
@@ -209,9 +243,16 @@ window.__ModuleLoader__.load({
               h('input', { type: 'checkbox', checked: draft.patchEnabled, onChange: (e) => set('patchEnabled', e.target.checked) }),
               t('patchEnabled.option'))),
           h('div', { className: 'sb-foot' },
-            h('button', { className: 'sb-save', type: 'button', disabled: busy, onClick: save }, busy ? t('saving') : t('save')),
-            note ? h('span', { className: 'sb-note' + (note.ok ? '' : ' sb-note--err') }, note.text) : null,
+            h('div', { className: 'sb-foot-reset' },
+              h('button', { className: 'sb-reset', type: 'button', disabled: busy, onClick: () => reset('resetTulpa', t('resetConfirmTulpa')) }, t('resetTulpa')),
+              h('button', { className: 'sb-reset', type: 'button', disabled: busy, onClick: () => reset('resetAllowlist', t('resetConfirmAllowlist')) }, t('resetAllowlist')),
+              h('button', { className: 'sb-reset', type: 'button', disabled: busy, onClick: () => reset('resetGroups', t('resetConfirmGroups')) }, t('resetGroups')),
+            ),
+            h('div', { className: 'sb-foot-save' },
+              h('button', { className: 'sb-save', type: 'button', disabled: busy, onClick: save }, busy ? t('saving') : t('save'))
+            )
           ),
+          note ? h('div', { className: 'sb-note' + (note.ok ? ' sb-note--warn' : ' sb-note--err'), style: { marginTop: 8 } }, note.text) : null,
         );
       }
 

@@ -15,11 +15,20 @@ function workDir(groupId: string, workspace: string): string {
 }
 
 // 系统提示词（system prompt）
-function systemPrompt(group: { groupId: string; groupName: string; }, workspace: string): string {
+function systemPromptBuilder(group: { groupId: string; groupName: string; }, workspace: string): string {
   const dir = workDir(group.groupId, workspace);
+
   return [
-    `你是一个 QQ 群友（群号 ${group.groupId}，群名 ${group.groupName}）。你和大家一样聊天，回复简短自然，乐于助人。`,
-    `本群 workspace：${dir}。文件只在本群目录内读写，使用绝对路径；命令显式设置 workspace，不沿用默认 cwd 或宿主根目录。`,
+    `你是 QQ 群「${group.groupName}」（群号 ${group.groupId}）中的一名群友。自然参与交流，回复简短、得体。`,
+    `本群 workspace：${dir}。所有文件操作仅限本群目录，使用绝对路径；命令显式设置 workspace，不沿用默认 cwd 或宿主根目录。`,
+    '',
+    '## 人格与记忆',
+    `- ${dir}/SOUL.md：本群独立人格。每次会话开始时读取，遵循其中的原则。`,
+    `- ${dir}/MEMORY.md：长期记忆，只记录稳定、有长期价值的信息，按需读取。`,
+    `- ${dir}/memory/YYYY-MM-DD.md：每日日志，记录当天重要事件、讨论结论、决定和待办，只追加。`,
+    `- ${dir}/memory/YYYY-MM.zip：历史日志月度归档，通常无需读取。`,
+    '- 不同群的人格和记忆严格隔离，禁止跨群读取、复制或混用。',
+    '- 只根据明确、稳定的信息更新人格和记忆；区分事实、个人观点与群体共识。',
     '',
     '## 如何回复',
     '- 短回复一次发送完整内容，长回复自然地拆分发送。',
@@ -28,36 +37,41 @@ function systemPrompt(group: { groupId: string; groupName: string; }, workspace:
     '- 向 QQ 群发送文字必须显式调用 qqbot_send_message，普通 assistant 文本（包括最终回复）不会公开到群聊。',
     '- qqbot_send_message 成功后，必须再原样输出 assistant 文本 "已发送"，然后再结束本轮，否则会报错！',
     '',
-    '## 记忆整理',
-    '本群记忆文件路径如下：',
-    `- ${dir}/MEMORY.md —— 长期记忆，只放稳定、长期有效的信息（群友画像、约定、共识）`,
-    `- ${dir}/YYYY-MM-DD.md —— 每日日志，追加式，只增不改`,
-    `- ${dir}/archived/*.md —— 归档的过时日志，无需查看`,
+    '## 记忆管理',
+    '- MEMORY.md 是经过整理的长期记忆，允许更新、合并和删除过时信息，保持内容准确、精简。',
+    '- 每日日志采用追加式记录，已有内容不得静默修改或覆盖。',
+    '- 发现历史记录错误或信息变化时，在当前日志追加更正说明，不修改原始记录。',
+    '- SOUL.md 只在长期交流足以支持稳定人格调整时修改，避免因单次事件改变人格。',
+    '- 每过一个月时，将上个月的日志整理，提炼有长期价值的信息并更新 MEMORY.md。',
+    '- 完成整理后，调用 qqtool_archive_group_logs 工具，将对应月份的日志归档为 memory/YYYY-MM.zip。',
+    '- ZIP 归档作为历史记录保留，不随意修改或覆盖。',
     '',
-    '回复前如有需要，先读 MEMORY.md 回忆群友背景；对话中了解到新的有价值信息时，及时写回。',
-    '',
-    '### 何时整理',
-    '每段对话自然结束时（话题聊完、或当天最后一次发言）判断是否有值得记的内容：有就写，没有就跳过',
-    '',
-    '### 记入 MEMORY.md（长期记忆）',
-    '- 群友稳定信息：昵称、身份、兴趣、偏好、口头禅、彼此关系',
-    '- 群里的约定、规则、共识',
-    '- 长期有效的事实或背景',
-    '',
-    '### 记入 YYYY-MM-DD.md（当日日志）',
-    '- 当天的重要事件、讨论结论、决定、待办',
-    '',
-    '### 不记录',
-    '- 闲聊、寒暄、一次性问答、无意义测试、检索到的临时数据',
-    '',
-    '### 维护',
-    '- 日志是追加式，绝不覆盖或改写历史内容。',
-    '- 每月把超过 30 天的日志按主题提炼进 MEMORY.md，之后把旧日志移入归档文件夹。',
+    '## 文件与安全',
+    '- 文件操作只允许在本群 workspace 内进行。',
+    '- 不覆盖或随意改写历史日志。',
+    '- 外部操作、公开发布及代表群友作出的承诺必须谨慎处理。',
   ].join('\n');
 }
 
-// QQ 会话上下文裁剪规则。
-const QQ_DROP_SECTIONS = [
+// tools_of_history 的工具提示词
+const historyToolPrompts = {
+  qqtool_get_recent_messages: '读取当前群最近消息，按时间正序；cursor 沿用返回的 next_cursor 继续向前翻页。',
+  qqtool_search_messages: '当前群按北京时间、账号或昵称、字面关键词组合检索（条件为 AND）；cursor 翻页。',
+  qqtool_get_message_context: '展开当前群某条消息的前后文；before/after 为 1~32。',
+  qqtool_get_message: '完整读取单条消息，展开折叠长文本；缺失的图片、附件、语音只给元数据与缺失标记。',
+};
+
+// 允许 bot 使用的工具（白名单的默认值）
+const DEFAULT_TOOLS_ALLOWLIST = [
+  "qqbot_send_file",
+  "read", "write", "edit",
+  "glob", "grep", "pwsh",
+  "web_fetch", "web_search"
+];
+
+
+// 无用的 section 提示词，移除以节约 token 消耗。
+const SECTIONS_TO_DROP = [
   'context:file-reference',          // 本地文件引用指引
   'harness:source',                  // 开发态源码 checkout 说明
   'app:web-surface',                 // Web GUI URL 说明
@@ -70,10 +84,14 @@ const QQ_DROP_SECTIONS = [
   'tools:sdk',                       // 生成 SDK 说明
 ];
 
-const QQ_DROP_CONTEXTS = ['harness:source', 'app:web-surface'];
+// 无用的 context 提示词，移除以节约 token 消耗。
+const CONTEXTS_TO_DROP = [
+  'harness:source',
+  'app:web-surface'
+];
 
-// runtime-context 长文本压缩为中文短句，未知格式原样保留。
-const QQ_CONTEXT_COMPACT: Record<string, (text: string) => string> = {
+// 要压缩的 context 提示词，压缩为中文短句，未知格式原样保留。
+const CONTEXT_TO_COMPACT: Record<string, (text: string) => string> = {
   'working-directory:current': (text) => {
     const m = /^Current working directory:\s*(.+?)(?:\r?\n|$)/m.exec(text);
     return m ? `实际 cwd：${m[1].replace(/\.\s*$/, '')}` : text;
@@ -89,11 +107,5 @@ const QQ_CONTEXT_COMPACT: Record<string, (text: string) => string> = {
   },
 };
 
-const historyDescriptions = {
-  qqtool_get_recent_messages: '读取当前群最近消息，按时间正序；cursor 沿用返回的 next_cursor 继续向前翻页。',
-  qqtool_search_messages: '当前群按北京时间、账号或昵称、字面关键词组合检索（条件为 AND）；cursor 翻页。',
-  qqtool_get_message_context: '展开当前群某条消息的前后文；before/after 为 1~32。',
-  qqtool_get_message: '完整读取单条消息，展开折叠长文本；缺失的图片、附件、语音只给元数据与缺失标记。',
-};
 
-export { systemPrompt as groupPrompt, historyDescriptions, workDir, QQ_DROP_SECTIONS, QQ_DROP_CONTEXTS, QQ_CONTEXT_COMPACT };
+export { CONTEXTS_TO_DROP, CONTEXT_TO_COMPACT, DEFAULT_TOOLS_ALLOWLIST, SECTIONS_TO_DROP, historyToolPrompts, systemPromptBuilder, workDir };

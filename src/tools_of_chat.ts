@@ -61,7 +61,15 @@ const agentSendToolPatcher = new SourcePatcher({
           additionalProperties: false,
         },
         output: {
-          schema: { type: 'json' },
+          schema: {
+            type: 'object',
+            properties: {
+              sent: { type: 'integer' },
+              target: { type: 'string' },
+            },
+            required: ['sent', 'target'],
+            additionalProperties: false,
+          },
           render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
         },
         async execute(args, exec) {

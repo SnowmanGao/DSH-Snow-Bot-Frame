@@ -1,27 +1,29 @@
 // =====================================================================
-//  bridge/tulpa_mcp.ts —— Tulpa MCP 连接层（专用 JSON-RPC 客户端）
+//  tulpa_mcp.ts —— Tulpa MCP 专用连接层
 //
-//  凭据（bearer）与地址由配置面板提供，不读取任何 DSH 连接存储文件。
-//  严格限制为 127.0.0.1/localhost HTTP 端点——本插件只对接本机 Tulpa，
-//  是专用连接层而非通用 MCP 抽象；将来接入第二个 MCP server 再抽通用层。
+//  凭据与地址由配置面板提供。
+//  仅支持 127.0.0.1 / localhost HTTP 端点。
 //
-//  连接策略：每操作一连接（use() = initialize 握手 → fn → close），
-//  无状态、不会遇到会话过期，代价是每次多 ~2 个 RTT 握手。
+//  连接策略：每操作一连接
+//  use() = initialize → fn(client) → close
 // =====================================================================
 
-// 已握手、能调用工具的 MCP 客户端句柄（原 common/dsh_types 的 Transport，
-// 更名后移到这里——它是本插件自己的接口，不是 DSH 宿主类型）。
 export interface McpClient {
   serverName?: string;
   call(name: string, args?: Record<string, unknown>): Promise<any>;
   close(): Promise<void>;
 }
 
-class TulpaMcp {
-  constructor(private opts: { bearer: string; url?: string }) { }
+export class TulpaMcp {
+  constructor(private opts: {
+    bearer: string;
+    url?: string;
+  }) { }
 
-  // 每操作一连接：initialize → fn(client) → close（fn 抛错也保证关闭）。
-  async use<T>(fn: (client: McpClient) => Promise<T>): Promise<T> {
+  // 每次操作独立连接，自动管理生命周期
+  async use<T>(
+    fn: (client: McpClient) => Promise<T>
+  ): Promise<T> {
     const client = await this.connect();
     try {
       return await fn(client);
@@ -30,18 +32,24 @@ class TulpaMcp {
     }
   }
 
+  // 创建并初始化 MCP 客户端
   private async connect(): Promise<McpClient> {
     const bearer = this.opts.bearer?.trim();
-    if (!bearer) throw new Error('缺少 Tulpa bearer 配置');
+    if (!bearer) {
+      throw new Error('缺少 Tulpa bearer 配置');
+    }
+
     let url: URL;
     try {
       url = new URL(this.opts.url?.trim() || 'http://127.0.0.1:18777/mcp');
     } catch {
       throw new Error('Tulpa 地址不合法');
     }
-    if (url.protocol !== 'http:' || (url.hostname !== '127.0.0.1' && url.hostname !== 'localhost')) {
+
+    if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(url.hostname)) {
       throw new Error('仅支持本机 loopback Tulpa 端点');
     }
+
     const headers: Record<string, string> = {
       Authorization: `Bearer ${bearer}`,
       'Content-Type': 'application/json',
@@ -51,55 +59,104 @@ class TulpaMcp {
     let session: string | null = null;
     let protocol = '2025-03-26';
     let seq = 0;
+    let closed = false;
 
-    async function request(method: string, params: unknown, notify = false) {
+    // 统一处理 JSON-RPC 请求
+    const request = async (method: string, params: unknown, notify = false): Promise<any> => {
+      const id = notify ? undefined : ++seq;
+
       const response = await fetch(url, {
         method: 'POST',
         redirect: 'error',
-        headers: { ...headers, ...(session ? { 'Mcp-Session-Id': session } : {}), 'MCP-Protocol-Version': protocol },
+        headers: {
+          ...headers,
+          ...(session ? { 'Mcp-Session-Id': session } : {}),
+          'MCP-Protocol-Version': protocol,
+        },
         signal: AbortSignal.timeout(30000),
-        body: JSON.stringify({ jsonrpc: '2.0', ...(!notify ? { id: ++seq } : {}), method, params }),
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          ...(id !== undefined ? { id } : {}),
+          method,
+          params,
+        }),
       });
-      if (!response.ok) { await response.body?.cancel(); throw new Error(`Tulpa HTTP ${response.status}`); }
+
+      if (!response.ok) {
+        await response.body?.cancel();
+        throw new Error(`Tulpa HTTP ${response.status}`);
+      }
+
       session = response.headers.get('mcp-session-id') ?? session;
       const text = await response.text();
       if (notify && !text.trim()) return {};
+
       let messages: any[];
       try {
         messages = response.headers.get('content-type')?.includes('text/event-stream')
-          ? text.split(/\r?\n/).filter(x => x.startsWith('data:')).map(x => JSON.parse(x.slice(5)))
+          ? text.split(/\r?\n/).filter(line => line.startsWith('data:')).map(line => JSON.parse(line.slice(5)))
           : [JSON.parse(text)];
-      } catch { throw new Error('Malformed Tulpa protocol response'); }
-      const payload = messages.find(x => x.id === seq) ?? messages.at(-1);
+      } catch {
+        throw new Error('Malformed Tulpa protocol response');
+      }
+
+      const payload = messages.find(x => x.id === id) ?? messages.at(-1);
       if (payload?.error) throw new Error('Tulpa protocol error');
       return payload?.result ?? {};
-    }
-
-    const init = await request('initialize', {
-      protocolVersion: protocol,
-      capabilities: {},
-      clientInfo: { name: 'dsh-snow-bot-frame', version: '0.4.0' }
-    });
-    protocol = init.protocolVersion ?? protocol;
-    await request('notifications/initialized', {}, true);
-
-    return {
-      serverName: 'tulpa',
-      async call(name, args) {
-        const result = await request('tools/call', { name, arguments: args });
-        if (result.isError) throw new Error(`Tulpa rejected ${name}`);
-        if (result.structuredContent) return result.structuredContent;
-        const text = (result.content ?? []).filter((x: any) => x.type === 'text').map((x: any) => x.text).join('\n');
-        try { return JSON.parse(text); } catch { throw new Error(`Tulpa ${name} returned non-JSON`); }
-      },
-      async close() {
-        if (session) {
-          const r = await fetch(url, { method: 'DELETE', redirect: 'error', headers: { ...headers, 'Mcp-Session-Id': session, 'MCP-Protocol-Version': protocol }, signal: AbortSignal.timeout(3000) });
-          await r.body?.cancel();
-        }
-      },
     };
+
+    const call = async function (name: string, args?: Record<string, unknown>) {
+      const result = await request('tools/call', { name, arguments: args });
+      if (result.isError) throw new Error(`Tulpa rejected ${name}`);
+      if (result.structuredContent) return result.structuredContent;
+      const text = (result.content ?? [])
+        .filter((x: any) => x.type === 'text')
+        .map((x: any) => x.text)
+        .join('\n');
+      try { return JSON.parse(text); }
+      catch { throw new Error(`Tulpa ${name} returned non-JSON`); }
+    };
+
+    const close = async (): Promise<void> => {
+      if (closed) return;
+      closed = true;
+      const currentSession = session;
+      session = null;
+      if (!currentSession) return;
+      const response = await fetch(url, {
+        method: 'DELETE',
+        redirect: 'error',
+        headers: {
+          ...headers,
+          'Mcp-Session-Id': currentSession,
+          'MCP-Protocol-Version': protocol,
+        },
+        signal: AbortSignal.timeout(3000),
+      });
+      await response.body?.cancel();
+    };
+
+    try {
+      // MCP initialize 握手
+      const init = await request('initialize', {
+        protocolVersion: protocol,
+        capabilities: {},
+        clientInfo: {
+          name: 'dsh-snow-bot-frame',
+          version: '0.4.0',
+        },
+      });
+
+      protocol = init.protocolVersion ?? protocol;
+      await request('notifications/initialized', {}, true);
+
+      // 最终返回
+      return { serverName: 'tulpa', call, close };
+
+    } catch (error) {
+      // 初始化失败也要释放已创建的 session
+      await close().catch(() => { });
+      throw error;
+    }
   }
 }
-
-export { TulpaMcp };
