@@ -29,6 +29,30 @@ function parseGroupId(conversationId: string): string | undefined {
   return m ? m[1] : undefined;
 }
 
+// 从 im-qqbot 组装后的 agentBody 里提取「用户实际输入的核心文本」。
+// agentBody 形如 `[昵称 (openid)] 内容 (@you)`，群聊还可能带历史/引用/
+// 媒体块；Tulpa 里存的是原始消息（可能含 `@机器人昵称` 前缀）。这里只取
+// 核心内容，再与 Tulpa 消息做「互相包含」匹配。
+function extractCore(agentBody: string): string {
+  let t = agentBody;
+  // 群聊历史块 [Chat history begins]…[Chat history ends]
+  t = t.replace(/\[Chat history begins\][\s\S]*?\[Chat history ends\]/g, '');
+  // 引用块 [Quoted message begins]…[Quoted message ends]
+  t = t.replace(/\[Quoted message begins\][\s\S]*?\[Quoted message ends\]/g, '');
+  // [Current message] 标记
+  t = t.replace(/\[Current message\]/g, '');
+  // 媒体附件标签
+  t = t.replace(/\[(?:图片|视频|文件)\]/g, '');
+  t = t.replace(/\[Voice message[^\]]*\]/g, '');
+  // 动态媒体行（- Image: … / - ASR: … 等）
+  t = t.replace(/^\s*-[^\n]*\n?/gm, '');
+  // 行首发送者标签 [昵称 (openid)]
+  t = t.replace(/^\s*\[[^\]]*\]\s*/, '');
+  // 末尾 (@you) 标记
+  t = t.replace(/\s*\(@you\)\s*$/, '');
+  return t.trim();
+}
+
 // Tulpa 返回的 time 是北京时间字符串 "YYYY-MM-DD HH:MM:SS +08:00"（无原始毫秒）。
 // 转回 Unix 毫秒（UTC）以便与 DSH 侧的时间戳比较。
 function beijingTimeToMs(s: string): number | undefined {
@@ -60,8 +84,12 @@ function listGroups(mcp: TulpaMcp): Promise<TulpaConversation[]> {
   });
 }
 
-// 消息指纹匹配：在时间窗口内，找「内容出现在 agentBody 里」的群，唯一才采信。
+// 消息指纹匹配：在时间窗口内，找「内容与核心文本互相包含」的群，唯一才采信。
 function matchGroup(mcp: TulpaMcp, agentBody: string, now: number): Promise<TulpaConversation | undefined> {
+  // 先提取核心文本；过短则放弃匹配（避免「嗯」「好」等误命中多个群）。
+  const core = extractCore(agentBody);
+  if (core.length < MIN_CONTENT_LEN) return Promise.resolve(undefined);
+
   // 单连接完成「列群 + 逐群读最新消息」，避免为每个群重复建连。
   return mcp.use(async (t) => {
     const page = await t.call('list_conversations', { platform: 'qq', limit: 20 });
@@ -70,7 +98,7 @@ function matchGroup(mcp: TulpaMcp, agentBody: string, now: number): Promise<Tulp
     for (const g of groups) {
       let rp: any;
       try {
-        rp = await t.call('read_conversation', { platform: 'qq', conversation_id: g.conversationId, order: 'newest', limit: 5 });
+        rp = await t.call('read_conversation', { platform: 'qq', conversation_id: g.conversationId, order: 'newest', limit: 10 });
       } catch {
         continue; // 单群读取失败不影响其它群
       }
@@ -79,7 +107,8 @@ function matchGroup(mcp: TulpaMcp, agentBody: string, now: number): Promise<Tulp
         if (content.length < MIN_CONTENT_LEN) continue;
         const ts = beijingTimeToMs(String(m.time ?? ''));
         if (ts === undefined || Math.abs(ts - now) > MATCH_WINDOW) continue;
-        if (agentBody.includes(content)) { hits.push(g); break; }
+        // 双向包含：Tulpa 原始消息可能含 @机器人昵称 前缀，agentBody 核心是去掉标签后的正文
+        if (content.includes(core) || core.includes(content)) { hits.push(g); break; }
       }
     }
     // 命中多个群则视为歧义，不采信（下条消息再学）。
@@ -87,4 +116,4 @@ function matchGroup(mcp: TulpaMcp, agentBody: string, now: number): Promise<Tulp
   });
 }
 
-export { listGroups, matchGroup };
+export { extractCore, listGroups, matchGroup };

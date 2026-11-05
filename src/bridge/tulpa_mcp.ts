@@ -8,6 +8,7 @@
 //  use() = initialize → fn(client) → close
 // =====================================================================
 
+
 export interface McpClient {
   serverName?: string;
   call(name: string, args?: Record<string, unknown>): Promise<any>;
@@ -15,21 +16,32 @@ export interface McpClient {
 }
 
 export class TulpaMcp {
+  // 串行化队列：Tulpa 的 MCP 端点对并发连接有限制（并发 initialize 时，
+  // 后一个连接的工具调用会返回 HTTP 409）。这里把所有 use() 串成一条链，
+  // 前一个完成（含 close）后再执行下一个，避免并发撞车。
+  private queue: Promise<unknown> = Promise.resolve();
+
   constructor(private opts: {
     bearer: string;
     url?: string;
   }) { }
 
-  // 每次操作独立连接，自动管理生命周期
+  // 每次操作独立连接，自动管理生命周期；跨操作串行执行。
   async use<T>(
     fn: (client: McpClient) => Promise<T>
   ): Promise<T> {
-    const client = await this.connect();
-    try {
-      return await fn(client);
-    } finally {
-      await client.close().catch(() => { });
-    }
+    const run = async (): Promise<T> => {
+      const client = await this.connect();
+      try {
+        return await fn(client);
+      } finally {
+        await client.close().catch(() => { });
+      }
+    };
+    const p = this.queue.then(run, run);
+    // 队列吞掉错误，保证后续调用不被上一次失败卡死
+    this.queue = p.then(() => undefined, () => undefined);
+    return p;
   }
 
   // 创建并初始化 MCP 客户端

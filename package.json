@@ -1,7 +1,7 @@
 {
   "name": "dsh-snow-bot-frame",
   "icon": "assets/icon.png",
-  "version": "0.4.50",
+  "version": "0.4.72",
   "title": "QQ 机器人雪人框架 (dsh-snow-bot-frame)",
   "description": "[Snowman] QQ Bot 插件，优化流程，注入自有工具，同时节约 Token 消耗，基于官方机器人和 Tulpa 项目。",
   "type": "module",
@@ -36,9 +36,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "tsc --noEmit -p tsconfig.json",
-    "demo": "tsx src/_dev_scripts/demo.ts",
-    "release": "node src/_dev_scripts/release.ts release",
-    "pack-only": "node src/_dev_scripts/release.ts pack-only"
+    "demo": "tsx dev-scripts/demo.ts",
+    "release": "node dev-scripts/release.ts release",
+    "pack-only": "node dev-scripts/release.ts pack-only"
   },
   "engines": {
     "node": ">=22.18.0"

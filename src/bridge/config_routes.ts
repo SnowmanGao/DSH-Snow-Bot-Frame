@@ -19,6 +19,8 @@ import { isMap, isScalar, isSeq, parseDocument, YAMLMap } from 'yaml';
 import { TULPA_DEFAULT_URL } from '../config_schema.js';
 import { DEFAULT_TOOLS_ALLOWLIST } from '../prompt.js';
 import { resetLearnedGroups } from '../group_resolver.js';
+import { listGroups } from './tulpa.js';
+import { TulpaMcp } from './tulpa_mcp.js';
 import type { Ctx } from '../common/dsh_types.js';
 import { desktopProfileDir } from './paths.js';
 
@@ -93,6 +95,18 @@ function sendJson(res: any, status: number, body: Record<string, unknown>) {
   res.end(JSON.stringify(body));
 }
 
+// 探测 Tulpa 连接：用给定 url/bearer 建连并列出已授权 QQ 群。
+// 返回 { ok:true, groups } 或 { ok:false, error }，不抛异常（错误统一进 result）。
+async function probeTulpa(url: string, bearer: string): Promise<Record<string, unknown>> {
+  const mcp = new TulpaMcp({ bearer, url });
+  try {
+    const groups = await listGroups(mcp);
+    return { ok: true, groups: groups.map((g) => ({ groupId: g.groupId, groupName: g.groupName })) };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 // 注册 GET/POST /snow-bot/config 路由。getConfig 返回当前生效配置（已解包）。
 function registerConfigRoutes(ctx: Ctx, getConfig: () => Record<string, unknown>) {
   if (typeof ctx.inject !== 'function') return;
@@ -123,6 +137,14 @@ function registerConfigRoutes(ctx: Ctx, getConfig: () => Record<string, unknown>
           if (action === 'resetGroups') {
             resetLearnedGroups();
             sendJson(res, 200, { ok: true, config: getConfig() });
+            return;
+          }
+          if (action === 'testTulpa') {
+            // 检测连接：优先用前端当前表单填写的 url/bearer，未传则回退已保存配置。
+            const current = getConfig() as Record<string, unknown>;
+            const url = typeof (body as any).tulpaUrl === 'string' ? (body as any).tulpaUrl : (current.tulpaUrl ?? '');
+            const bearer = typeof (body as any).tulpaBearer === 'string' ? (body as any).tulpaBearer : (current.tulpaBearer ?? '');
+            sendJson(res, 200, { ok: true, result: await probeTulpa(url, bearer) });
             return;
           }
           if (action !== 'resetTulpa' && action !== 'resetAllowlist') {

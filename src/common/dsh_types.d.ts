@@ -19,7 +19,7 @@ export interface Agent {
   };
   ctx: {
     on(event: string, handler: (...args: any[]) => any): () => void;
-    tools: { register(def: unknown): unknown; };
+    tools: { register(def: unknown): unknown; restrict?(filter: { allow?: string[]; deny?: string[] }): unknown; };
     [k: string]: unknown;
   };
   [k: string]: unknown;

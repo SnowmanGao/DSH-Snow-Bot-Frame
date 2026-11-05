@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 发布脚本，由 package.json scripts 调用（node src/_dev_scripts/release.ts <mode>）：
+// 发布脚本，由 package.json scripts 调用（node dev-scripts/release.ts <mode>）：
 //   pnpm run pack-only   编译 -> 打包（不安装）
 //   pnpm run release     编译 -> 打包 -> 安装到 DSH
 // 
@@ -17,7 +17,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const root = path.resolve(here, '../..');
+const root = path.resolve(here, '..');
 const mode = process.argv[2] === 'pack-only' ? 'pack-only' : 'release';
 
 const meta = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));

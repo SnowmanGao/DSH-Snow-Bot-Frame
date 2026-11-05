@@ -13,6 +13,7 @@ import { qqbotPrefs } from './paths.js';
 let cachedMtime = 0;
 let cachedMap = new Map<string, string>(); // openid → sessionId（仅群聊）
 
+
 // 全量读取 openid → sessionId（mtime 变化才重新解析，失败沿用上次缓存）。
 function sessionIdsByOpenid(): Map<string, string> {
   try {
@@ -41,4 +42,5 @@ function openidForSessionId(sessionId: string | undefined): string | undefined {
   return undefined;
 }
 
-export { openidForSessionId };
+const FAILED_TIPS = "Tulpa 群功能可能尚未启动或仍在初始化，请先正常回复用户，下一条消息再重试。";
+export { FAILED_TIPS, openidForSessionId };

@@ -19,10 +19,9 @@ const TULPA_DEFAULT_URL = 'http://127.0.0.1:18777/mcp';
 const Config = Schema.object({
   /*
     关键：每个叶子字段都要标 .volatile()，DSH 的 SettingsForms 才会把本插件
-    纳入「可配置条目」清单（volatileForm: schema 返回 undefined 的条目会被
-    直接跳过，GUI 里不出现）。数组字段整体 volatile、元素字段不标，避免
-    「volatile 嵌套 volatile」校验报错。宿主运行时通过可变引用传递这些字段，
-    插件应使用 .get() 读取当前快照。
+    纳入「可配置条目」清单（schema 返回 undefined 的条目会被 直接跳过，GUI 
+    里不出现）。数组字段整体 volatile、元素字段不标，避免嵌套导致校验报错。
+    宿主运行时通过可变引用传递这些字段，插件应使用 .get() 读取当前快照。
   */
   workspace: Schema.string().volatile(),
   tulpaUrl: Schema.string().default(TULPA_DEFAULT_URL).volatile(),

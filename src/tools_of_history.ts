@@ -7,6 +7,7 @@
 // =====================================================================
 
 import { createHash } from 'node:crypto';
+import { FAILED_TIPS } from './bridge/qqbot_prefs.js';
 import type { McpClient, TulpaMcp } from './bridge/tulpa_mcp.js';
 import type { ResolvedGroup } from './group_resolver.js';
 import { historyToolPrompts } from './prompt.js';
@@ -144,9 +145,10 @@ class HistoryUtil {
 }
 
 // 4 个历史工具的完整定义：从 openid 解析所属群，走 Tulpa 读本群历史。
+// openid 由调用方以 getOpenid() 懒解析（agent 创建时 prefs 可能尚未落盘）。
 function createHistoryTools(
   mcp: TulpaMcp,
-  openid: string,
+  getOpenid: () => string | undefined,
   resolveGroup: (openid: string) => Promise<ResolvedGroup | undefined>,
 ) {
   const str = { type: 'string' };
@@ -164,8 +166,10 @@ function createHistoryTools(
   type ToolName = keyof typeof parameters;
 
   const run = async (name: ToolName, args: any) => {
+    const openid = getOpenid();
+    if (!openid) throw new Error(FAILED_TIPS);
     const group = await resolveGroup(openid);
-    if (!group) throw new Error('尚未识别出所属群（Tulpa 配对未成功），请稍后重试');
+    if (!group) throw new Error(FAILED_TIPS);
     const binding = { platform: 'qq', conversation_id: group.conversationId };
     // 每操作一连接：mcp.use 负责握手与关闭。
     return mcp.use(async (t) => {
@@ -205,4 +209,4 @@ function date(x: string | undefined, end = false): number | null {
 }
 
 
-export { HistoryUtil, createHistoryTools };
+export { createHistoryTools, HistoryUtil };

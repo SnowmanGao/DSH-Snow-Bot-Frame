@@ -5,7 +5,7 @@ node_modules/
 /dist/
 
 # Demo
-src/_dev_scripts/demo.ts
+dev-scripts/demo.ts
 
 # 暂时排除
 README.md

@@ -42,9 +42,10 @@ window.__ModuleLoader__.load({
       .sb-reset:disabled { opacity: 0.5; cursor: not-allowed; }
       .sb-save { padding: 8px 18px; font-size: 13px; cursor: pointer; border: 0; border-radius: 6px; background: var(--dsw-alias-brand-primary, #4f6ef7); color: #fff; }
       .sb-save:disabled { opacity: 0.5; cursor: not-allowed; }
-      .sb-note { font-size: 12px; color: var(--dsw-alias-label-tertiary, #888); }
+      .sb-note { font-size: 12px; color: var(--dsw-alias-label-tertiary, #888); padding: 6px 12px; }
       .sb-note--err { color: var(--dsw-alias-state-error-primary, #d3382b); }
       .sb-note--warn { color: var(--dsw-alias-state-warn-primary, #e67e22); }
+      .sb-test-row { display: flex; align-items: flex-start; gap: 10px; margin-top: 8px; }
       .sb-main { height: 100%; overflow: auto; }
       .sb-main-inner { max-width: 960px; margin: 0 auto; padding: 28px clamp(24px, 4vw, 48px) 48px; }
       .sb-title { font-size: 20px; font-weight: 500; line-height: 28px; color: var(--dsw-alias-label-primary, #1a1a1a); margin-bottom: 24px; }
@@ -109,6 +110,10 @@ window.__ModuleLoader__.load({
       'tulpaUrl.hint': '本机 Tulpa 的 streamable-http 端点（默认为：http://127.0.0.1:18777/mcp）。',
       'tulpaBearer.label': 'Tulpa MCP Bearer 凭据',
       'tulpaBearer.hint': '本机 Tulpa 的 MCP bearer 凭据 （在 Tulpa 里授权后粘贴到这里）。',
+      'testConn': '检测连接',
+      'testing': '检测中…',
+      'testOk': '连接成功，已授权以下群：',
+      'testFail': '连接失败：',
       'learned.label': '已配对成功的群聊（只读）',
       'learned.empty': '（暂无可用群聊，在群里 @<机器人> 发送任意消息以开始配对）',
       'toolAllowlist.label': 'QQ Bot 可用工具白名单',
@@ -162,6 +167,8 @@ window.__ModuleLoader__.load({
         const [loadError, setLoadError] = useState(null);
         const [busy, setBusy] = useState(false);
         const [note, setNote] = useState(null);
+        const [testing, setTesting] = useState(false);
+        const [testResult, setTestResult] = useState(null);
 
         useEffect(() => {
           let alive = true;
@@ -223,6 +230,34 @@ window.__ModuleLoader__.load({
           }
         };
 
+        const testConn = async () => {
+          setTesting(true);
+          setTestResult(null);
+          try {
+            const res = await fetch(CONFIG_PATH, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ action: 'testTulpa', tulpaUrl: draft.tulpaUrl, tulpaBearer: draft.tulpaBearer }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.ok) throw new Error(data.error || 'HTTP ' + res.status);
+            const r = data.result || {};
+            if (r.ok) {
+              const groups = r.groups || [];
+              const list = groups.length
+                ? '\n' + groups.map((g) => `${g.groupName}（群号 ${g.groupId}）`).join('\n')
+                : '\n（无已授权群）';
+              setTestResult({ ok: true, text: t('testOk') + list });
+            } else {
+              setTestResult({ ok: false, text: t('testFail') + (r.error || '') });
+            }
+          } catch (e) {
+            setTestResult({ ok: false, text: t('testFail') + e.message });
+          } finally {
+            setTesting(false);
+          }
+        };
+
         const learnedText = draft.learned.length
           ? draft.learned.map((d) => `${d.groupName}（群号 ${d.groupId}）`).join('\n')
           : t('learned.empty');
@@ -233,7 +268,12 @@ window.__ModuleLoader__.load({
           h(Field, { label: t('tulpaUrl.label'), hint: t('tulpaUrl.hint') },
             h('input', { className: 'sb-input', value: draft.tulpaUrl, onChange: (e) => set('tulpaUrl', e.target.value) })),
           h(Field, { label: t('tulpaBearer.label'), hint: t('tulpaBearer.hint') },
-            h('input', { className: 'sb-input', type: 'password', value: draft.tulpaBearer, onChange: (e) => set('tulpaBearer', e.target.value) })),
+            h('input', { className: 'sb-input', type: 'password', value: draft.tulpaBearer, onChange: (e) => set('tulpaBearer', e.target.value) }),
+            h('div', { className: 'sb-test-row' },
+              h('button', { className: 'sb-reset', type: 'button', disabled: testing, onClick: testConn }, testing ? t('testing') : t('testConn')),
+              testResult ? h('span', { className: 'sb-note' + (testResult.ok ? ' sb-note--warn' : ' sb-note--err'), style: { whiteSpace: 'pre-wrap' } }, testResult.text) : null,
+            ),
+          ),
           h(Field, { label: t('learned.label') },
             h('pre', { className: 'sb-pre' }, learnedText)),
           h(Field, { label: t('toolAllowlist.label'), hint: t('toolAllowlist.hint') },
