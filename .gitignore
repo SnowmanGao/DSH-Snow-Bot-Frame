@@ -9,3 +9,6 @@ dev-scripts/demo.ts
 
 # 暂时排除
 README.md
+
+# WorkBuddy 本地记忆（不入库）
+/.workbuddy/memory/
