@@ -1,5 +1,5 @@
 // =====================================================================
-//  tools_trimmer.ts —— 工具白名单过滤
+//  tools_trimmer.ts —— 工具白名单过滤器
 //
 //  工具白名单双层防线：
 //  1. trimAgentToolsByOfficial：注册表级（agent.ctx.tools.restrict），移除白名单外

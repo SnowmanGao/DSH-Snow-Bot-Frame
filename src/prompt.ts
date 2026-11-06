@@ -21,7 +21,7 @@ function systemPromptBuilder(group: { groupId: string; groupName: string; }): st
   return [
     `你是 QQ 群 "${group.groupName}"（群号 ${group.groupId}）中的一名群友。`,
     '每个群聊的工作目录互相隔离：文件操作只允许在本群工作目录内进行。',
-    '获取聊天记录的后台软件是 Tulpa，若该软件出现问题：直接报告，不要尝试修复。',
+    '获取聊天记录的后台软件代号 FatCat，若该软件出现问题：直接报告，不要尝试修复。',
     '',
     '## 人格与记忆',
     '- SOUL.md：本群独立人格。每次会话开始时读取，遵循其中的原则。',
@@ -39,10 +39,10 @@ function systemPromptBuilder(group: { groupId: string; groupName: string; }): st
     '- qqbot_send_message 成功后，必须原样输出 assistant 文本 "已发送"，然后再结束本轮，否则会报错！',
     '',
     '## 记忆管理',
-    '- MEMORY.md 是经过整理的长期记忆，允许更新、合并和删除过时信息，保持内容准确、精简。',
-    '- 每日日志采用追加式记录，发现历史记录错误或信息变化时，在当前日志追加更正说明，不修改原始记录。',
     '- SOUL.md 只在长期交流足以支持稳定人格调整时修改，避免因单次事件改变人格。',
-    '- 每过一个月时，将上个月的日志整理，提炼有长期价值的信息并更新 MEMORY.md。',
+    '- MEMORY.md 是经过整理的长期记忆，允许更新、合并和删除过时信息，保持内容准确、精简。',
+    '- 每日日志则仅允许追加记录，不应修改或更新。追加时，在末尾写上 EOF 标记，方便下次 edit 时替换。',
+    '- 每过一个月时，将上个月的日志 read 整理，提炼有长期价值的信息并更新 MEMORY.md。',
     '- 完成整理后，调用 qqtool_archive_group_logs 工具，程序会自动将对应月份的日志归档为 YYYY-MM.zip。',
     '- zip 归档作为宝贵的历史记录保留，不得修改或覆盖。',
   ].join('\n');
@@ -69,7 +69,6 @@ const DEFAULT_TOOLS_ALLOWLIST = [
   "web_fetch"
 ];
 
-
 // 无用的 section 提示词，移除以节约 token 消耗
 const SECTIONS_TO_DROP: string[] = [
   'harness:identity',  // You are an AI agent powered by DeepSeek Harness.
@@ -83,10 +82,17 @@ const SECTIONS_TO_DROP: string[] = [
   'tool:subagent',  // Start independent delegations with `subagent` together ...
 ];
 
-// 要压缩的 section 提示词：删除其中指定句子、保留其余（静态度量不能靠 restrict）。
+// 要压缩的 section 提示词：删除其中指定句子、保留其余
 const SECTIONS_TO_COMPACT: Record<string, (text: string) => string> = {
   'ui:deliverable-file-references': (text) =>
-    text.replace(/(?:Do not call|Use present when|Each presented file|Avoid repeating results|append #L24 or|Default to the)[\s\S]*?\.\s*/g, ''),
+    text.replace(
+      new RegExp(`(?:${[
+        'Do not call', 'Use present when',
+        'Each presented file', 'Avoid repeating results',
+        'append #L24 or', 'Default to the',
+      ].join('|')})[\\s\\S]*?\\.\\s*`, 'g'),
+      '',
+    ),
 };
 
 // 无用的 context 提示词，移除以节约 token 消耗
@@ -96,22 +102,8 @@ const CONTEXTS_TO_DROP: string[] = [
   'skill-catalog',  // <system-reminder> A skill is a reusable ...
 ];
 
-// 要压缩的 context 提示词，压缩为中文短句，未知格式原样保留。
-const CONTEXT_TO_COMPACT: Record<string, (text: string) => string> = {
-  'working-directory:current': (text) => {
-    const m = /^Current working directory:\s*(.+?)(?:\r?\n|$)/m.exec(text);
-    return m ? `实际 cwd：${m[1].replace(/\.\s*$/, '')}` : text;
-  },
-  'sandbox:policy': (text) => {
-    const mode = /^Current DSH file policy:\s*([\w-]+)\./m.exec(text);
-    const root = /session workspace:\s*("(?:[^"\\]|\\.)*")/.exec(text);
-    return mode ? `文件权限：${mode[1]}${root?.[1] ? `；范围：${root[1]}` : ''}` : text;
-  },
-  'approval:policy': (text) => {
-    const mode = /^Approval policy:\s*([\w-]+)\./m.exec(text);
-    return mode ? `审批：${mode[1]}` : text;
-  },
+
+export {
+  CONTEXTS_TO_DROP, DEFAULT_TOOLS_ALLOWLIST, SECTIONS_TO_DROP, SECTIONS_TO_COMPACT,
+  historyToolPrompts, memoryToolPrompts, systemPromptBuilder, workDir
 };
-
-
-export { CONTEXTS_TO_DROP, CONTEXT_TO_COMPACT, DEFAULT_TOOLS_ALLOWLIST, SECTIONS_TO_DROP, SECTIONS_TO_COMPACT, historyToolPrompts, memoryToolPrompts, systemPromptBuilder, workDir };

@@ -1,5 +1,5 @@
 // =====================================================================
-//  prompt_trimmer.ts —— 提示词过滤、裁剪
+//  prompt_trimmer.ts —— 提示词过滤、裁剪器
 //
 //  DSH 的 system prompt 由具名 section / context 组成，name 即稳定标识：
 //  - 删（trimAssemblySections / trimAssemblyContexts）：按 name 黑名单移除整块

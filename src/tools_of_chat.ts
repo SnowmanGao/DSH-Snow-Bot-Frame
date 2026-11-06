@@ -11,8 +11,7 @@
 import { SourcePatcher } from './common/source_patcher.js';
 import { qqBotOutbound, qqBotBootstrap } from './bridge/paths.js';
 
-// 1. 抑制自动发送：在 route() 里丢弃自动输出事件。
-// 参见 dsh-qqbot@0.5.5 outbound.js 的 route 函数。
+// 1. 抑制自动发送（durable 路径）：在 route() 里丢弃 assistant/tool 事件。
 const neverAutoSendPatcher = new SourcePatcher({
   file: qqBotOutbound,
   before: [
@@ -31,7 +30,23 @@ const neverAutoSendPatcher = new SourcePatcher({
   ].join('\n'),
 });
 
-// 2. 暴露文本发送服务：在 registerSendFileTool 之后，把 send 能力挂到 ctx 上，
+// 2. 抑制自动发送（流式路径）：新版 DSH 的 assistant 文本走 agent/assistant-stream
+// 瞬态帧 → routeStreamFrame → buffer → turn/end flush。route() 的抑制管不到这条
+// 路径，需在 routeStreamFrame 入口直接丢弃，buffer 不再累积文本。
+const neverAutoStreamPatcher = new SourcePatcher({
+  file: qqBotOutbound,
+  before: [
+    '    routeStreamFrame(agentId, delta) {',
+    "        if (delta.kind === 'attempt-start') {",
+  ].join('\n'),
+  after: [
+    '    routeStreamFrame(agentId, delta) {',
+    '        return;',
+    "        if (delta.kind === 'attempt-start') {",
+  ].join('\n'),
+});
+
+// 3. 暴露文本发送服务：在 registerSendFileTool 之后，把 send 能力挂到 ctx 上，
 // 供本插件在 agent 作用域注册 qqbot_send_message 工具（真隔离，避免全局工具）。
 const agentSendToolPatcher = new SourcePatcher({
   file: qqBotBootstrap,
@@ -75,9 +90,9 @@ const agentSendToolPatcher = new SourcePatcher({
   ].join('\n'),
 });
 
-// 按 patchEnabled 统一注入/还原两个 patch（幂等）。
+// 按 patchEnabled 统一注入/还原三个 patch（幂等）。
 function applyPatches(enabled: boolean): void {
-  const patchers = [neverAutoSendPatcher, agentSendToolPatcher];
+  const patchers = [neverAutoSendPatcher, neverAutoStreamPatcher, agentSendToolPatcher];
   for (const p of patchers) {
     if (enabled) p.inject();
     else p.revert();
@@ -114,4 +129,4 @@ function createSendMessageTool(send: (content: string, target: string | undefine
   };
 }
 
-export { agentSendToolPatcher, applyPatches, createSendMessageTool, neverAutoSendPatcher };
+export { agentSendToolPatcher, applyPatches, createSendMessageTool, neverAutoSendPatcher, neverAutoStreamPatcher };

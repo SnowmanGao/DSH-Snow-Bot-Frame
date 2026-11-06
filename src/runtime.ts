@@ -8,7 +8,7 @@
 // =====================================================================
 
 import { mkdir } from 'node:fs/promises';
-import { systemPromptBuilder, SECTIONS_TO_DROP, SECTIONS_TO_COMPACT, CONTEXTS_TO_DROP, CONTEXT_TO_COMPACT, workDir } from './prompt.js';
+import { systemPromptBuilder, SECTIONS_TO_DROP, SECTIONS_TO_COMPACT, CONTEXTS_TO_DROP, workDir } from './prompt.js';
 import { openidForSessionId } from './bridge/qqbot_prefs.js';
 import type { Agent, Ctx } from './common/dsh_types.js';
 import { trimAssemblySections, trimAssemblyContexts, compactByTransforms } from './common/prompt_trimmer.js';
@@ -152,7 +152,7 @@ const promptHook: AgentHook = (agent, deps) => {
       // 条件渲染的段随工具移除自动卸载。
       // 静态的 tool:bash 和 tool:pwsh 是特例，只能始终保留（短，可接受）。
       const sections = compactByTransforms(trimAssemblySections(result.sections, SECTIONS_TO_DROP), SECTIONS_TO_COMPACT);
-      const contexts = compactByTransforms(trimAssemblyContexts(result.contexts, CONTEXTS_TO_DROP), CONTEXT_TO_COMPACT);
+      const contexts = trimAssemblyContexts(result.contexts, CONTEXTS_TO_DROP);
       const text = systemPromptBuilder(group);
       // waterfall 返回后仍需排序：仅靠 order 字段无法保证提示词排在开头，
       // 因此不得不把群提示词放到数组最前，使其优先于其他 section。

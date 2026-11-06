@@ -6,22 +6,26 @@
 //  并完整读取长消息，用于补充群聊上下文和理解讨论经过。
 // =====================================================================
 
-import { createHash } from 'node:crypto';
 import { FAILED_TIPS } from './bridge/qqbot_prefs.js';
 import type { McpClient, TulpaMcp } from './bridge/tulpa_mcp.js';
 import type { ResolvedGroup } from './group_resolver.js';
 import { historyToolPrompts } from './prompt.js';
+import { decodeCursor, encodeCursor, purifyMessage, purifyMessages } from './common/message_trimmer.js';
 
 
-export interface HistoryMessage {
+// Tulpa 原始消息（字段随 Tulpa 版本可能有出入，只声明用到的关键字段）。
+type RawMessage = {
   id: number;
-  timestamp: number;
-  platform: string;
-  conversation_id: string;
-  sender_id: string;
-  content: string;
+  time?: string;
+  sender?: string;
+  sender_id?: string;
+  content?: string;
+  platform?: string;
+  conversation_id?: string;
+  truncated?: boolean;
+  media?: unknown[];
   [k: string]: unknown;
-}
+};
 
 class HistoryUtil {
   constructor(
@@ -55,11 +59,11 @@ class HistoryUtil {
     return page.rows ?? [];
   }
 
-  private async get(id: number, snapshot: number): Promise<HistoryMessage> {
+  private async get(id: number, snapshot: number): Promise<RawMessage> {
     const c = await this.t.call('get_context', { message_id: id, radius: 0, snapshot_max_id: snapshot });
-    const m = c.messages?.find((x: any) => x.id === id);
+    const m = c.messages?.find((x: any) => x.id === id) as RawMessage | undefined;
     if (!m || m.platform !== this.platform || m.conversation_id !== this.conversation) throw new Error('Message not in current conversation');
-    return { ...m, sources: c.sources ?? [] };
+    return m;
   }
 
   // 最近消息（时间正序）。cursor = 上一页返回的 next_cursor。
@@ -73,7 +77,6 @@ class HistoryUtil {
     const limit = number(args.limit, 10);
     if (!limit) throw new Error('limit must be positive');
     const current = await this.scope();
-    const signature = createHash('sha256').update(JSON.stringify([this.platform, this.conversation, start ?? null, end ?? null, sender ?? null, keyword ?? null])).digest('hex');
     let snapshot = current;
     let where = '';
     const a = date(start), b = date(end, true);
@@ -92,22 +95,21 @@ class HistoryUtil {
     }
     if (keyword) where += ` AND instr(content,${quote(keyword)})>0`;
     if (cursor) {
-      let c: any;
-      try { c = JSON.parse(Buffer.from(cursor, 'base64url').toString()); } catch { throw new Error('Invalid cursor'); }
-      if (c.signature !== signature || !Number.isSafeInteger(c.snapshot) || c.snapshot > current || !Number.isSafeInteger(c.time) || !Number.isSafeInteger(c.id)) throw new Error('Cursor scope or query mismatch');
+      const c = decodeCursor(cursor);
+      if (c.snapshot > current) throw new Error('Cursor snapshot ahead of data');
       snapshot = c.snapshot;
       where += ` AND (timestamp<${c.time} OR (timestamp=${c.time} AND id<${c.id}))`;
     }
     const rows = await this.sql(where, limit + 1, snapshot);
     const selected = rows.slice(0, limit); // 最新在前（DESC）
-    const messages: HistoryMessage[] = [];
-    for (const [id] of selected) messages.push(await this.get(id, snapshot));
-    messages.reverse(); // 按时间正序返回
+    const raw: RawMessage[] = [];
+    for (const [id] of selected) raw.push(await this.get(id, snapshot));
+    raw.reverse(); // 按时间正序返回
     const oldest = selected.at(-1);
     return {
-      messages,
+      messages: purifyMessages(raw),
       has_more: rows.length > limit,
-      next_cursor: rows.length > limit && oldest ? Buffer.from(JSON.stringify({ signature, snapshot, id: oldest[0], time: oldest[1] })).toString('base64url') : null,
+      next_cursor: rows.length > limit && oldest ? encodeCursor(snapshot, oldest[0], oldest[1]) : null,
     };
   }
 
@@ -123,7 +125,7 @@ class HistoryUtil {
     if (i === undefined || i < 0) throw new Error('Missing anchor');
     const messages = r.messages.slice(Math.max(0, i - before), i + after + 1);
     if (messages.some((x: any) => x.platform !== this.platform || x.conversation_id !== this.conversation)) throw new Error('Context crossed binding');
-    return { messages, id, sources: r.sources?.filter((s: any) => messages.some((m: any) => m.id === s.message_id)) ?? [] };
+    return { messages: purifyMessages(messages), id };
   }
 
   // 完整读取单条消息，展开折叠长文本。
@@ -136,7 +138,12 @@ class HistoryUtil {
     for (let i = 0; i < 128; i++) {
       const p = await this.t.call('read_message', { message_id: id, offset, limit: 8000 });
       text += p.content ?? '';
-      if (!p.has_more) return { ...message, content: text, truncated: false, snapshot_max_id: snapshot, attachment_note: 'Only imported native text, quote and attachment metadata are available; missing media is not reconstructed.' };
+      if (!p.has_more) {
+        return {
+          ...purifyMessage({ ...message, content: text, truncated: false }),
+          attachment_note: 'Only imported native text, quote and attachment metadata are available; missing media is not reconstructed.',
+        };
+      }
       if (!(p.next_offset > offset)) throw new Error('Non-progressing long-message cursor');
       offset = p.next_offset;
     }
