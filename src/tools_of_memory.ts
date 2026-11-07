@@ -16,7 +16,9 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { FAILED_TIPS } from './bridge/qqbot_prefs.js';
 import type { ResolvedGroup } from './group_resolver.js';
-import { memoryToolPrompts, workDir } from './prompt.js';
+import { toolPrompts, workDir } from './prompt.js';
+import { hydrateParameters, type ParamDef } from './common/tools_def_utils.js';
+import type { ToolDef } from './common/dsh_types.js';
 
 // 默认人格模板源文件（随包发布到 assets/，不再硬编码到代码里）。
 // 编译后本文件在 dist/、源在包根 assets/，相对 ../assets/SOUL.md；
@@ -80,14 +82,15 @@ function createMemoryTools(
   getOpenid: () => string | undefined,
   resolveGroup: (openid: string) => Promise<ResolvedGroup | undefined>,
   workspace: string,
-) {
-  const str = { type: 'string' };
+): ToolDef[] {
   const output = { schema: { type: 'object', additionalProperties: true }, render: (_args: unknown, value: unknown) => [{ type: 'text', text: JSON.stringify(value) }] };
+  const names = ['qqtool_archive_group_logs'] as const;
+  type ToolName = typeof names[number];
 
-  const parameters = {
-    qqtool_archive_group_logs: { type: 'object', properties: { month: str }, required: ['month'], additionalProperties: false },
+  // 参数结构（type/required）。
+  const paramDefs: Record<ToolName, Record<string, ParamDef>> = {
+    qqtool_archive_group_logs: { month: { type: 'string', required: true } },
   };
-  type ToolName = keyof typeof parameters;
 
   const run = async (name: ToolName, args: any) => {
     const openid = getOpenid();
@@ -99,10 +102,10 @@ function createMemoryTools(
     }
   };
 
-  return (Object.keys(parameters) as ToolName[]).map((name) => ({
+  return names.map((name) => ({
     name,
-    description: memoryToolPrompts[name],
-    parameters: parameters[name],
+    description: toolPrompts[name].description,
+    parameters: hydrateParameters(toolPrompts[name].parameters, paramDefs[name]),
     output,
     async execute(args: any) { return run(name, args); },
   }));

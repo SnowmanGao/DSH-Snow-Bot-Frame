@@ -4,54 +4,30 @@
 //  本脚本用于弥补官方 QQ Bot 无法获取聊天历史的短板。
 //  使 AI 能读取当前群的近期消息、按条件检索历史、展开指定消息前后文
 //  并完整读取长消息，用于补充群聊上下文和理解讨论经过。
+//  媒体（图片下载、语音转写）已拆到 tools_of_media.ts。
 // =====================================================================
 
 import { FAILED_TIPS } from './bridge/qqbot_prefs.js';
 import type { McpClient, TulpaMcp } from './bridge/tulpa_mcp.js';
 import type { ResolvedGroup } from './group_resolver.js';
-import { historyToolPrompts } from './prompt.js';
-import { decodeCursor, encodeCursor, purifyMessage, purifyMessages } from './common/message_trimmer.js';
+import { toolPrompts } from './prompt.js';
+import { hydrateParameters, type ParamDef } from './common/tools_def_utils.js';
+import type { ToolDef } from './common/dsh_types.js';
+import { decodeCursor, encodeCursor, purifyMessage, purifyMessages } from './common/message_purifier.js';
+import { TulpaConversation, type RawMessage } from './bridge/tulpa_conversation.js';
 
 
-// Tulpa 原始消息（字段随 Tulpa 版本可能有出入，只声明用到的关键字段）。
-type RawMessage = {
-  id: number;
-  time?: string;
-  sender?: string;
-  sender_id?: string;
-  content?: string;
-  platform?: string;
-  conversation_id?: string;
-  truncated?: boolean;
-  media?: unknown[];
-  [k: string]: unknown;
-};
-
-class HistoryUtil {
+class HistoryUtil extends TulpaConversation {
   constructor(
-    private t: McpClient,
-    private binding: { platform?: string; conversation_id: string; },
+    t: McpClient,
+    binding: { platform?: string; conversation_id: string; },
   ) {
-    if (!binding.conversation_id) throw new Error('Trusted conversation binding required');
+    super(t, binding);
   }
 
-  private get platform() { return this.binding.platform ?? 'qq'; }
-  private get conversation() { return this.binding.conversation_id; }
-
-  // 校验当前会话在 Tulpa 授权范围内，返回快照游标。
-  private async scope(): Promise<number> {
-    const s = await this.t.call('get_data_status', {});
-    const allowed = s.scope?.conversations?.some((x: string) => {
-      try { const a = JSON.parse(x); return a[0] === this.platform && a[1] === this.conversation; }
-      catch { return false; }
-    });
-    if (!allowed || !s.scope?.platforms?.includes(this.platform)) throw new Error('Conversation outside Tulpa authorization');
-    return s.snapshot_max_id;
-  }
-
-  private async sql(where: string, limit: number, snapshot: number): Promise<[number, number][]> {
+  private async sql(where: string, limit: number, snapshot: number, order: 'ASC' | 'DESC'): Promise<[number, number][]> {
     const page = await this.t.call('query_communication_db', {
-      sql: `SELECT id,timestamp FROM agent_messages WHERE platform=${quote(this.platform)} AND conversation_id=${quote(this.conversation)} ${where} ORDER BY timestamp DESC,id DESC LIMIT ${limit}`,
+      sql: `SELECT id,timestamp FROM agent_messages WHERE platform=${quote(this.platform)} AND conversation_id=${quote(this.conversation)} ${where} ORDER BY timestamp ${order},id ${order} LIMIT ${limit}`,
       max_rows: limit,
       snapshot_max_id: snapshot,
     });
@@ -59,22 +35,18 @@ class HistoryUtil {
     return page.rows ?? [];
   }
 
-  private async get(id: number, snapshot: number): Promise<RawMessage> {
-    const c = await this.t.call('get_context', { message_id: id, radius: 0, snapshot_max_id: snapshot });
-    const m = c.messages?.find((x: any) => x.id === id) as RawMessage | undefined;
-    if (!m || m.platform !== this.platform || m.conversation_id !== this.conversation) throw new Error('Message not in current conversation');
-    return m;
-  }
-
   // 最近消息（时间正序）。cursor = 上一页返回的 next_cursor。
   async recentMessages(args: { limit?: number; cursor?: string; } = {}) {
     return this.searchMessages({ limit: args.limit, cursor: args.cursor });
   }
 
-  // 组合检索（时间正序）。条件 AND；翻页只变 cursor，其余条件不变。
-  async searchMessages(args: { start?: string; end?: string; sender?: string; keyword?: string; limit?: number; cursor?: string; } = {}) {
+  // 组合检索（本页结果始终按时间从旧到新排列）。条件 AND；翻页只变 cursor，其余条件不变。
+  // sort 控制取数方向：latest 取最新匹配（DESC，cursor 沿更早方向），oldest 取最早匹配（ASC，cursor 沿更晚方向）。
+  async searchMessages(args: { start?: string; end?: string; sender?: string; keyword?: string; sort?: string; limit?: number; cursor?: string; } = {}) {
     const { start, end, sender, keyword, cursor } = args;
-    const limit = number(args.limit, 10);
+    const sort = args.sort ?? 'latest';
+    if (sort !== 'latest' && sort !== 'oldest') throw new Error("sort must be 'latest' or 'oldest'");
+    const limit = number(args.limit, 16);
     if (!limit) throw new Error('limit must be positive');
     const current = await this.scope();
     let snapshot = current;
@@ -98,26 +70,28 @@ class HistoryUtil {
       const c = decodeCursor(cursor);
       if (c.snapshot > current) throw new Error('Cursor snapshot ahead of data');
       snapshot = c.snapshot;
-      where += ` AND (timestamp<${c.time} OR (timestamp=${c.time} AND id<${c.id}))`;
+      const op = sort === 'oldest' ? '>' : '<';
+      where += ` AND (timestamp${op}${c.time} OR (timestamp=${c.time} AND id${op}${c.id}))`;
     }
-    const rows = await this.sql(where, limit + 1, snapshot);
-    const selected = rows.slice(0, limit); // 最新在前（DESC）
+    const order = sort === 'oldest' ? 'ASC' : 'DESC';
+    const rows = await this.sql(where, limit + 1, snapshot, order);
+    const selected = rows.slice(0, limit); // 沿取数方向的前 limit 条
     const raw: RawMessage[] = [];
     for (const [id] of selected) raw.push(await this.get(id, snapshot));
-    raw.reverse(); // 按时间正序返回
-    const oldest = selected.at(-1);
+    if (sort === 'latest') raw.reverse(); // DESC 最新在前，反转为时间正序；ASC 本身已正序
+    const boundary = selected.at(-1); // 当前页沿取数方向的最后一条，作为下一页起点
     return {
       messages: purifyMessages(raw),
       has_more: rows.length > limit,
-      next_cursor: rows.length > limit && oldest ? encodeCursor(snapshot, oldest[0], oldest[1]) : null,
+      next_cursor: rows.length > limit && boundary ? encodeCursor(snapshot, boundary[0], boundary[1]) : null,
     };
   }
 
   // 展开某条消息的前后文（时间正序）。
   async messageContext(args: { id: number; before?: number; after?: number; }) {
     const { id } = args;
-    const before = number(args.before, 8);
-    const after = number(args.after, 8);
+    const before = number(args.before, 16);
+    const after = number(args.after, 16);
     const snapshot = await this.scope();
     await this.get(id, snapshot);
     const r = await this.t.call('get_context', { message_id: id, radius: Math.max(before, after), snapshot_max_id: snapshot });
@@ -157,20 +131,21 @@ function createHistoryTools(
   mcp: TulpaMcp,
   getOpenid: () => string | undefined,
   resolveGroup: (openid: string) => Promise<ResolvedGroup | undefined>,
-) {
-  const str = { type: 'string' };
-  const int = { type: 'integer' };
+): ToolDef[] {
   const output = { schema: { type: 'object', additionalProperties: true }, render: (_args: unknown, value: unknown) => [{ type: 'text', text: JSON.stringify(value) }] };
-  const object = (properties: Record<string, unknown>, required?: string[]) =>
-  ({ type: 'object', properties, ...(required ? { required } : {}), additionalProperties: false });
+  const names = ['qqtool_get_recent_messages', 'qqtool_search_messages', 'qqtool_get_message_context', 'qqtool_get_message'] as const;
+  type ToolName = typeof names[number];
 
-  const parameters = {
-    qqtool_get_recent_messages: object({ limit: int, cursor: str }),
-    qqtool_search_messages: object({ start: str, end: str, sender: str, keyword: str, limit: int, cursor: str }),
-    qqtool_get_message_context: object({ id: int, before: int, after: int }, ['id']),
-    qqtool_get_message: object({ id: int }, ['id']),
+  // 参数结构（type/required）：真正的类型信息在此，prompt.ts 只放描述文案。
+  const paramDefs: Record<ToolName, Record<string, ParamDef>> = {
+    qqtool_get_recent_messages: { limit: { type: 'integer' }, cursor: { type: 'string' } },
+    qqtool_search_messages: {
+      start: { type: 'string' }, end: { type: 'string' }, sender: { type: 'string' },
+      keyword: { type: 'string' }, sort: { type: 'string' }, limit: { type: 'integer' }, cursor: { type: 'string' },
+    },
+    qqtool_get_message_context: { id: { type: 'integer', required: true }, before: { type: 'integer' }, after: { type: 'integer' } },
+    qqtool_get_message: { id: { type: 'integer', required: true } },
   };
-  type ToolName = keyof typeof parameters;
 
   const run = async (name: ToolName, args: any) => {
     const openid = getOpenid();
@@ -190,10 +165,10 @@ function createHistoryTools(
     });
   };
 
-  return (Object.keys(parameters) as ToolName[]).map(name => ({
+  return names.map(name => ({
     name,
-    description: historyToolPrompts[name],
-    parameters: parameters[name],
+    description: toolPrompts[name].description,
+    parameters: hydrateParameters(toolPrompts[name].parameters, paramDefs[name]),
     output,
     async execute(args: any) { return run(name, args); },
   }));
@@ -201,7 +176,7 @@ function createHistoryTools(
 
 const quote = (x: unknown) => `'${String(x).replaceAll("'", "''")}'`;
 
-function number(x: unknown, fallback: number, max = 32): number {
+function number(x: unknown, fallback: number, max = 64): number {
   const v = (x ?? fallback) as number;
   if (!Number.isInteger(v) || v < 0 || v > max) throw new Error('Integer parameter out of range');
   return v;
@@ -209,8 +184,11 @@ function number(x: unknown, fallback: number, max = 32): number {
 
 function date(x: string | undefined, end = false): number | null {
   if (!x) return null;
-  if (!/^\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2})?$/.test(x)) throw new Error('Use Beijing YYYY-MM-DD or YYYY-MM-DD HH:MM');
-  const ms = Date.parse(x.replace(' ', 'T') + (x.length === 10 ? 'T00:00:00' : ':00') + '+08:00');
+  if (!/^\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}(?::\d{2})?)?$/.test(x))
+    throw new Error('Use Beijing YYYY-MM-DD, YYYY-MM-DD HH:MM, or YYYY-MM-DD HH:MM:SS');
+  // 纯日期补 T00:00:00，HH:MM 补 :00，HH:MM:SS 直接替换空格为 T。
+  const iso = x.length === 10 ? `${x}T00:00:00` : x.length === 16 ? `${x.replace(' ', 'T')}:00` : x.replace(' ', 'T');
+  const ms = Date.parse(iso + '+08:00');
   if (!Number.isFinite(ms)) throw new Error('Invalid date');
   return ms + (end && x.length === 10 ? 86400000 : 0);
 }

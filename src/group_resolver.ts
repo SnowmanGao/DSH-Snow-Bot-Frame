@@ -17,9 +17,8 @@ import { listGroups, matchGroup, type TulpaConversation } from './bridge/tulpa.j
 import { dbg } from './common/debug_log.js';
 import type { TulpaMcp } from './bridge/tulpa_mcp.js';
 
-// Tulpa 数据刷新周期约 3s：QQ 消息发出后，最多 ~3s 才被 Tulpa 入库。
-// 首条消息的学习必须在消息入库后再匹配，否则会「未命中」。取 3s + 余量。
-const TULPA_INGEST_DELAY_MS = 3500;
+// 首条消息的学习先留一点余量等消息入库，避免「未命中」。
+const TULPA_INGEST_DELAY_MS = 3000;
 const delay = (ms: number) => new Promise<void>((res) => setTimeout(res, ms));
 
 export interface ResolvedGroup {
@@ -159,7 +158,7 @@ class GroupResolver {
   }
 
   // 解析：缓存命中即返回；miss 时用最近一条消息学习（并发去重）。
-  // 学习前先延迟 ~3.5s，等 Tulpa 刷新入库，否则首条消息匹配不到。
+  // 学习前先延迟 ~3s 等消息入库，否则首条消息可能匹配不到。
   resolve(openid: string): Promise<ResolvedGroup | undefined> {
     const k = this.known(openid);
     if (k) return Promise.resolve(k);

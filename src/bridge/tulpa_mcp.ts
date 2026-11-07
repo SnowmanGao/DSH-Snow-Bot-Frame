@@ -12,7 +12,46 @@
 export interface McpClient {
   serverName?: string;
   call(name: string, args?: Record<string, unknown>): Promise<any>;
+  // 读取一张已缓存图片的像素。Tulpa 的 read_image 工具把图片以 base64 塞进
+  // MCP 响应的 image content 块（structuredContent 只含元数据），需单独提取。
+  readImage(message_id: number, index?: number): Promise<{ meta: Record<string, unknown>; images: { mimeType: string; data: string }[] }>;
   close(): Promise<void>;
+}
+
+// 把 fetch 失败翻译成人类可读、可指导行动的提示。Tulpa 未启动时 Node 的
+// undici fetch 只会抛 `TypeError: fetch failed`，真正原因藏在 cause 链的
+// code 字段（ECONNREFUSED / ECONNRESET / ETIMEDOUT / ENOTFOUND ...）。
+function describeFetchFailure(url: URL, e: unknown): string {
+  const host = `${url.hostname}:${url.port || (url.protocol === 'http:' ? 80 : 443)}`;
+  const err = e as { name?: string; message?: string; cause?: unknown } | undefined;
+
+  // 超时 / 主动中止
+  if (err?.name === 'TimeoutError' || err?.name === 'AbortError' || /timeout|aborted/i.test(err?.message ?? '')) {
+    return `Tulpa（FatCat）无响应：连接 ${host} 超时，可能已卡死或负载过高`;
+  }
+
+  // 沿 cause 链收集底层错误码
+  const codes = new Set<string>();
+  for (let c: any = err; c; c = c.cause) {
+    if (typeof c?.code === 'string') codes.add(c.code);
+  }
+
+  if (codes.has('ECONNREFUSED')) {
+    return `后端未启动：无法连接 ${host}（连接被拒绝），请启动后再重试`;
+  }
+  if (codes.has('ECONNRESET')) {
+    return `后端连接被重置：${host} 断开连接，后端可能正在重启或已停止`;
+  }
+  if (codes.has('ETIMEDOUT')) {
+    return `后端连接超时：${host} 长时间无响应，请确认后端是否仍在运行`;
+  }
+  if (codes.has('ENOTFOUND') || codes.has('EAI_AGAIN')) {
+    return `无法解析主机 ${host}，请检查后端 MCP 地址配置`;
+  }
+
+  // 兜底：把最底层错误码带出来，方便进一步定位
+  const codeStr = [...codes].join('/') || (err?.name ?? 'unknown');
+  return `后端连接失败：${host}（${codeStr}），这个错误需要用户仔细排查`;
 }
 
 export class TulpaMcp {
@@ -77,22 +116,27 @@ export class TulpaMcp {
     const request = async (method: string, params: unknown, notify = false): Promise<any> => {
       const id = notify ? undefined : ++seq;
 
-      const response = await fetch(url, {
-        method: 'POST',
-        redirect: 'error',
-        headers: {
-          ...headers,
-          ...(session ? { 'Mcp-Session-Id': session } : {}),
-          'MCP-Protocol-Version': protocol,
-        },
-        signal: AbortSignal.timeout(30000),
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          ...(id !== undefined ? { id } : {}),
-          method,
-          params,
-        }),
-      });
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          method: 'POST',
+          redirect: 'error',
+          headers: {
+            ...headers,
+            ...(session ? { 'Mcp-Session-Id': session } : {}),
+            'MCP-Protocol-Version': protocol,
+          },
+          signal: AbortSignal.timeout(30000),
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            ...(id !== undefined ? { id } : {}),
+            method,
+            params,
+          }),
+        });
+      } catch (e) {
+        throw new Error(describeFetchFailure(url, e));
+      }
 
       if (!response.ok) {
         await response.body?.cancel();
@@ -129,6 +173,23 @@ export class TulpaMcp {
       catch { throw new Error(`Tulpa ${name} returned non-JSON`); }
     };
 
+    // 图片像素：Tulpa 的 read_image 工具把图片以 base64 塞进响应的 image
+    // content 块（structuredContent 只含 message_id/index/frame 元数据），
+    // 必须单独从 content 里提取。图片未缓存时工具会以 isError + error 返回。
+    const readImage = async function (message_id: number, index = 0) {
+      const result = await request('tools/call', { name: 'read_image', arguments: { message_id, index } });
+      const meta = (result.structuredContent ?? {}) as Record<string, unknown>;
+      if (result.isError) {
+        const msg = typeof meta?.error === 'string' && meta.error ? meta.error : 'read_image 失败';
+        throw new Error(msg);
+      }
+      const images = (result.content ?? [])
+        .filter((x: any) => x.type === 'image' && typeof x.data === 'string')
+        .map((x: any) => ({ mimeType: String(x.mimeType ?? 'image/jpeg'), data: x.data as string }));
+      if (images.length === 0) throw new Error('read_image 未返回图片像素（图片可能未在本机缓存）');
+      return { meta, images };
+    };
+
     const close = async (): Promise<void> => {
       if (closed) return;
       closed = true;
@@ -163,7 +224,7 @@ export class TulpaMcp {
       await request('notifications/initialized', {}, true);
 
       // 最终返回
-      return { serverName: 'tulpa', call, close };
+      return { serverName: 'tulpa', call, readImage, close };
 
     } catch (error) {
       // 初始化失败也要释放已创建的 session

@@ -7,6 +7,7 @@
 //   （tool:* 段由注册表 restrict 处理：条件渲染的段随工具移除自动变空）
 // =====================================================================
 
+import { dbg } from './debug_log.js';
 import type { Assembly } from './dsh_types.js';
 
 type Named = { name: string;[k: string]: unknown; };
@@ -42,4 +43,22 @@ function trimAssemblyContexts(contexts: Contexts, rules: string[]): Contexts {
   return removeByRules(contexts, rules);
 }
 
-export { compactByTransforms, trimAssemblyContexts, trimAssemblySections };
+// util，用于...
+function removeTextBySentencePrefix(text: string, prefix: string[]): string {
+  const phrases = prefix.filter(Boolean);
+  if (phrases.length === 0) return text;
+
+  const hits = new Set<string>();
+  const re = new RegExp(`(${phrases.map(RegExp.escape).join('|')})[\\s\\S]*?\\.\\s*`, 'g');
+  const result = text.replace(re, (_, hit: string) => { hits.add(hit); return ''; });
+  const missed = phrases.filter((p) => !hits.has(p));
+  if (missed.length > 0) {
+    dbg(
+      `[snow-bot] ${text.slice(0, 16)}: ${missed.length}/${phrases.length} 条未命中 ` +
+      `(${missed.map((p) => JSON.stringify(p)).join(', ')})，prompt 可能已更新变动`,
+    );
+  }
+  return result;
+}
+
+export { compactByTransforms, trimAssemblyContexts, trimAssemblySections, removeTextBySentencePrefix };

@@ -9,7 +9,11 @@
 // =====================================================================
 
 import { SourcePatcher } from './common/source_patcher.js';
+import { hydrateParameters, type ParamDef } from './common/tools_def_utils.js';
+import type { ToolDef } from './common/dsh_types.js';
 import { qqBotOutbound, qqBotBootstrap } from './bridge/paths.js';
+import type { ResolvedGroup } from './group_resolver.js';
+import { toolPrompts } from './prompt.js';
 
 // 1. 抑制自动发送（durable 路径）：在 route() 里丢弃 assistant/tool 事件。
 const neverAutoSendPatcher = new SourcePatcher({
@@ -51,11 +55,13 @@ const neverAutoStreamPatcher = new SourcePatcher({
 const agentSendToolPatcher = new SourcePatcher({
   file: qqBotBootstrap,
   before: '    registerSendFileTool(ctx, mediaSender, manager, config, logger);',
+  // 清除历史版本的注入块（注释 → provide → `});`），防止 after 演进后残留叠加。
+  clear: /    \/\/ ── 文本发送能力（dsh-snow-bot-frame 注入[\s\S]*?\n    \}\);/g,
   after: [
     '    registerSendFileTool(ctx, mediaSender, manager, config, logger);',
     '    // ── 文本发送能力（dsh-snow-bot-frame 注入：暴露服务，工具由插件按 agent 作用域注册） ──',
     "    ctx.reflect.provide('snowbotSendMessage', {",
-    '      async send(content, target, exec) {',
+    '      async send(content, target, exec, groupId) {',
     "        if (typeof content !== 'string' || content.trim().length === 0) {",
     "          throw new Error('qqbot_send_message: content must be a non-empty string');",
     '        }',
@@ -78,13 +84,18 @@ const agentSendToolPatcher = new SourcePatcher({
     '        if (replyTarget === undefined) {',
     "          throw new Error('qqbot_send_message: 无法确定发送目标，请显式传 target 参数');",
     '        }',
+    "        const limit = config.textChunkLimit;",
     "        const { chunkMarkdownText } = await import('../transport/chunker.js');",
-    '        const chunks = chunkMarkdownText(content, config.textChunkLimit);',
-    '        for (const chunk of chunks) {',
-    '          await sender.sendMarkdown(replyTarget, chunk);',
-    '        }',
-    "        logger.info('[snow-bot] qqbot_send_message 发送 ' + chunks.length + ' 条 → ' + replyTarget.scope + ':' + replyTarget.targetId);",
-    "        return { sent: chunks.length, target: replyTarget.scope + ':' + replyTarget.targetId };",
+    '        const chunks = chunkMarkdownText(content, limit);',
+    '        // 一次只发一块：超过阈值只发第一块（截断），不拆分发送。',
+    '        const chunk = chunks[0];',
+    '        const truncated = chunks.length > 1;',
+    '        await sender.sendMarkdown(replyTarget, chunk);',
+    '        // target：群聊优先用插件学习出的纯数字群号，未学习时静默回退到原始 openid。',
+    "        const targetId = (replyTarget.scope === 'group' && groupId) ? groupId : replyTarget.targetId;",
+    "        const result = truncated ? ('发送已截断（本次仅发送前 ' + limit + ' 字符）') : '发送成功';",
+    "        logger.info('[snow-bot] qqbot_send_message → ' + replyTarget.scope + ':' + targetId + (truncated ? '（已截断）' : ''));",
+    "        return { result: result, target: replyTarget.scope + ':' + targetId };",
     '      },',
     '    });',
   ].join('\n'),
@@ -100,31 +111,35 @@ function applyPatches(enabled: boolean): void {
 }
 
 // qqbot_send_message 工具定义（在 agent 作用域注册）。
-// send 来自 patch 暴露的 snowbotSendMessage 服务。
-function createSendMessageTool(send: (content: string, target: string | undefined, exec: unknown) => Promise<{ sent: number; target: string }>) {
+// send 来自 patch 暴露的 snowbotSendMessage 服务；description 与参数 schema 在 prompt.ts。
+function createSendMessageTool(
+  send: (content: string, target: string | undefined, exec: unknown, groupId: string | undefined) => Promise<{ result: string; target: string }>,
+  getOpenid: () => string | undefined,
+  resolveGroup: (openid: string) => ResolvedGroup | undefined,
+): ToolDef {
+  const { description, parameters } = toolPrompts.qqbot_send_message;
+  // 参数结构（type/required）。
+  const paramDefs: Record<string, ParamDef> = {
+    content: { type: 'string', required: true },
+  };
   return {
     name: 'qqbot_send_message',
-    description: 'Send a text (markdown) message to the QQ user or group of the current conversation. Use this to reply; long content is auto-split into multiple messages.',
-    parameters: {
-      type: 'object',
-      properties: {
-        content: { type: 'string', description: 'The message text to send (markdown supported).' },
-        target: { type: 'string', description: 'Optional "c2c:openid" or "group:openid". Omit to send to the current conversation.' },
-      },
-      required: ['content'],
-      additionalProperties: false,
-    },
+    description,
+    parameters: hydrateParameters(parameters, paramDefs),
     output: {
       schema: {
         type: 'object',
-        properties: { sent: { type: 'integer' }, target: { type: 'string' } },
-        required: ['sent', 'target'],
+        properties: { result: { type: 'string' }, target: { type: 'string' } },
+        required: ['result', 'target'],
         additionalProperties: false,
       },
       render: (_args: unknown, value: unknown) => [{ type: 'text', text: JSON.stringify(value) }],
     },
     async execute(args: { content: string; target?: string }, exec: unknown) {
-      return send(args?.content, args?.target, exec);
+      // 群号优先用已学习出的纯数字群号，未学习则回退 openid（在 send 内处理）。
+      const openid = getOpenid();
+      const group = openid ? resolveGroup(openid) : undefined;
+      return send(args?.content, args?.target, exec, group?.groupId);
     },
   };
 }

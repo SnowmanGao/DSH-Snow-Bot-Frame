@@ -32,7 +32,8 @@ const logFile = resolveLogFile();
 function dbg(...args: unknown[]): void {
   try {
     mkdirSync(dirname(logFile), { recursive: true });
-    const line = `[${new Date().toISOString()}] ${args.map(String).join(' ')}\n`;
+    const time = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+    const line = `[${time}] ${args.map(String).join(' ')}\n`;
     appendFileSync(logFile, line, 'utf8');
   } catch {
     /* 日志写失败不致命 */

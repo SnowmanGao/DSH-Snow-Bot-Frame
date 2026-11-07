@@ -15,6 +15,7 @@ import { trimAssemblySections, trimAssemblyContexts, compactByTransforms } from 
 import { trimAgentToolsByInject, trimAgentToolsByOfficial } from './common/tools_trimmer.js';
 import { createSendMessageTool } from './tools_of_chat.js';
 import { createHistoryTools } from './tools_of_history.js';
+import { createMediaTools } from './tools_of_media.js';
 import { createMemoryTools, ensureGroupFiles } from './tools_of_memory.js';
 import { dbg } from './common/debug_log.js';
 import type { ResolvedConfig } from './config_schema.js';
@@ -75,12 +76,12 @@ const restrictToolsHook: AgentHook = (agent, deps) => {
 
 // 挂钩 1：注册文本发送工具（qqbot_send_message，agent 作用域）。
 const chatToolsHook: AgentHook = (agent, deps) => {
-  let send: ((content: string, target: string | undefined, exec: unknown) => Promise<{ sent: number; target: string; }>) | undefined;
+  let send: ((content: string, target: string | undefined, exec: unknown, groupId: string | undefined) => Promise<{ result: string; target: string; }>) | undefined;
   try { send = deps.ctx.get('snowbotSendMessage')?.send; } catch { /* 服务未提供 */ }
   if (typeof send !== 'function') { dbg('[snow-bot] QQ 发送服务不可用（未启用 patch 或 dsh-qqbot 未加载）'); return; }
   const tools = agent.ctx?.tools;
   if (tools && typeof tools.register === 'function') {
-    tools.register(createSendMessageTool(send));
+    tools.register(createSendMessageTool(send, () => openidForAgent(agent), (o) => deps.resolver.resolveCached(o)));
     dbg('[snow-bot] 文本发送工具已注册', agent.id);
   }
 };
@@ -93,6 +94,17 @@ const historyToolsHook: AgentHook = (agent, deps) => {
   if (tools && typeof tools.register === 'function') {
     for (const def of defs) tools.register(def);
     dbg('[snow-bot] 历史工具已注册', agent.id);
+  }
+};
+
+// 挂钩 2.5：注册 qqtool_fetch_media 媒体工具（图片按需下载 + 语音转写）。
+const mediaToolsHook: AgentHook = (agent, deps) => {
+  const getOpenid = () => openidForAgent(agent);
+  const defs = createMediaTools(deps.mcp, getOpenid, (o) => deps.resolver.resolve(o), deps.cfg.ws);
+  const tools = agent.ctx?.tools;
+  if (tools && typeof tools.register === 'function') {
+    for (const def of defs) tools.register(def);
+    dbg('[snow-bot] 媒体工具已注册', agent.id);
   }
 };
 
@@ -113,6 +125,7 @@ const memoryToolsHook: AgentHook = (agent, deps) => {
 // 会话。这里做：工具白名单注入级兜底（始终生效）+ 群已学习出 → 切工作目录
 // + 校正标题 + 裁剪 + 注入群提示词。
 const promptHook: AgentHook = (agent, deps) => {
+  let lastGroupId: string | undefined; // 上一次注入的群：日志降频，仅群对象变化时打印
   agent.ctx.on('system-prompt/assemble', async (_assembly: any, _context: any, next: () => Promise<any>) => {
     const assembled = await next();
     const openid = openidForAgent(agent);
@@ -123,7 +136,7 @@ const promptHook: AgentHook = (agent, deps) => {
     let result: any = { ...assembled, tools: trimAgentToolsByInject(assembled.tools, deps.cfg.toolAllowlist) };
 
     // 解析群映射：await (复用 onInboxClaimed 已启动的同一个 promise)
-    // 先延迟 3.5s 等 Tulpa 刷新入库再匹配，最多只等 8.0s
+    // 先延迟 3s 等消息入库再匹配，最多只等 8.0s
     const group = await deps.resolver.resolveBounded(openid, 8000);
     if (!group) return result;
 
@@ -161,7 +174,10 @@ const promptHook: AgentHook = (agent, deps) => {
         sections: [{ name: 'qq-group:context', order: -1e4, text }, ...(sections ?? [])],
         contexts,
       };
-      dbg('[snow-bot] 已注入群提示词', openid, '→', group.groupId, group.groupName);
+      if (group.groupId !== lastGroupId) {
+        dbg('[snow-bot] 已注入群提示词', openid, '→', group.groupId, group.groupName);
+        lastGroupId = group.groupId;
+      }
     } catch (e) {
       dbg('[snow-bot] 组装群提示词失败：', String(e));
     }
@@ -170,7 +186,7 @@ const promptHook: AgentHook = (agent, deps) => {
 };
 
 // 挂钩注册表：新增能力在此追加一行。
-const agentHooks: AgentHook[] = [restrictToolsHook, chatToolsHook, historyToolsHook, memoryToolsHook, promptHook];
+const agentHooks: AgentHook[] = [restrictToolsHook, chatToolsHook, historyToolsHook, mediaToolsHook, memoryToolsHook, promptHook];
 
 
 // ========================== 会话运行时 ==========================
