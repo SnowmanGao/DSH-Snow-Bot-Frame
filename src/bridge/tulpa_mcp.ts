@@ -161,9 +161,28 @@ export class TulpaMcp {
       return payload?.result ?? {};
     };
 
+    // 判断工具调用失败是否可重试。Tulpa 的 isError 响应里，限流/瞬时错误带
+    // retryable=true 或提示「频繁」等字样，稍等重试通常能恢复。
+    const isRetryableError = (result: any): boolean => {
+      const sc = result?.structuredContent ?? {};
+      if (sc.retryable === true) return true;
+      const msg = String(sc.error ?? '');
+      return /频繁|稍后|限流|rate.?limit|too.?many|busy|overloaded/i.test(msg);
+    };
+    const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
     const call = async function (name: string, args?: Record<string, unknown>) {
-      const result = await request('tools/call', { name, arguments: args });
-      if (result.isError) throw new Error(`Tulpa rejected ${name}`);
+      let result = await request('tools/call', { name, arguments: args });
+      // 限流/瞬时错误重试（最多 3 次、指数退避），避免批量读取时偶发失败整页崩掉。
+      for (let attempt = 0; attempt < 3 && result.isError && isRetryableError(result); attempt++) {
+        await sleep(500 * (1 << attempt));
+        result = await request('tools/call', { name, arguments: args });
+      }
+      if (result.isError) {
+        const sc = result?.structuredContent ?? {};
+        const detail = sc.error ? `: ${String(sc.error)}` : '';
+        throw new Error(`Tulpa rejected ${name}${detail}`);
+      }
       if (result.structuredContent) return result.structuredContent;
       const text = (result.content ?? [])
         .filter((x: any) => x.type === 'text')

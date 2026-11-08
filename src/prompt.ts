@@ -63,7 +63,7 @@ const toolPrompts: Record<string, ToolPrompt> = {
   qqtool_get_recent_messages: {
     description: '读取最新的 N 条消息，结果按从旧到新排序，可翻页',
     parameters: {
-      limit: '消息条数，1~64，默认 16',
+      limit: '消息条数，1~32，默认 8',
       cursor: '翻页游标，传上一页的 next_cursor 继续向前翻页',
     },
   },
@@ -75,7 +75,7 @@ const toolPrompts: Record<string, ToolPrompt> = {
       sender: '发送者 QQ 号（纯数字，精确匹配）或昵称（模糊匹配，可能重名或改名）',
       keyword: '消息内容的字面子串，精确匹配；不是语义搜索',
       sort: '截断取向：latest=截取最早结果，oldest=截取最近结果，默认 latest',
-      limit: '本页最多返回条数，1~64，默认 16',
+      limit: '本页最多返回条数，1~32，默认 8',
       cursor: '传入上一页的 next_cursor，其他查询条件保持不变，再次调用即可翻页',
     },
   },
@@ -83,8 +83,9 @@ const toolPrompts: Record<string, ToolPrompt> = {
     description: '读取某条消息的前后文',
     parameters: {
       id: '消息 ID',
-      before: '向前展开条数，0~64，默认 16',
-      after: '向后展开条数，0~64，默认 16',
+      // 请勿修改上限！Tulpa 后端只接受上限最多为 8
+      before: '向前展开条数，0~8，默认 8',
+      after: '向后展开条数，0~8，默认 8',
     },
   },
   qqtool_get_message: {

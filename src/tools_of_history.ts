@@ -25,14 +25,14 @@ class HistoryUtil extends TulpaConversation {
     super(t, binding);
   }
 
-  private async sql(where: string, limit: number, snapshot: number, order: 'ASC' | 'DESC'): Promise<[number, number][]> {
+  private async sql(where: string, limit: number, snapshot: number, order: 'ASC' | 'DESC'): Promise<SqlRow[]> {
     const page = await this.t.call('query_communication_db', {
-      sql: `SELECT id,timestamp FROM agent_messages WHERE platform=${quote(this.platform)} AND conversation_id=${quote(this.conversation)} ${where} ORDER BY timestamp ${order},id ${order} LIMIT ${limit}`,
+      sql: `SELECT id,timestamp,sender_id,sender,content,platform,conversation_id,has_media,has_voice,has_file FROM agent_messages WHERE platform=${quote(this.platform)} AND conversation_id=${quote(this.conversation)} ${where} ORDER BY timestamp ${order},id ${order} LIMIT ${limit}`,
       max_rows: limit,
       snapshot_max_id: snapshot,
     });
     if (page.truncated) throw new Error('Query unexpectedly truncated');
-    return page.rows ?? [];
+    return (page.rows ?? []).map((r: any[]) => toSqlRow(r));
   }
 
   // 最近消息（时间正序）。cursor = 上一页返回的 next_cursor。
@@ -46,7 +46,7 @@ class HistoryUtil extends TulpaConversation {
     const { start, end, sender, keyword, cursor } = args;
     const sort = args.sort ?? 'latest';
     if (sort !== 'latest' && sort !== 'oldest') throw new Error("sort must be 'latest' or 'oldest'");
-    const limit = number(args.limit, 16);
+    const limit = number(args.limit, 8, 32);
     if (!limit) throw new Error('limit must be positive');
     const current = await this.scope();
     let snapshot = current;
@@ -76,22 +76,26 @@ class HistoryUtil extends TulpaConversation {
     const order = sort === 'oldest' ? 'ASC' : 'DESC';
     const rows = await this.sql(where, limit + 1, snapshot, order);
     const selected = rows.slice(0, limit); // 沿取数方向的前 limit 条
-    const raw: RawMessage[] = [];
-    for (const [id] of selected) raw.push(await this.get(id, snapshot));
+    // 正文与发送者已随 SQL 一次取回，无需再逐条 get_context：
+    // 原「每页 N 条消息 → N 次 get_context」会在 limit 拉满时一次性发出几十次
+    // 请求，触发 Tulpa 限流（isError → "Tulpa rejected get_context"）。
+    const raw = selected.map(sqlRowToRaw);
     if (sort === 'latest') raw.reverse(); // DESC 最新在前，反转为时间正序；ASC 本身已正序
     const boundary = selected.at(-1); // 当前页沿取数方向的最后一条，作为下一页起点
     return {
       messages: purifyMessages(raw),
       has_more: rows.length > limit,
-      next_cursor: rows.length > limit && boundary ? encodeCursor(snapshot, boundary[0], boundary[1]) : null,
+      next_cursor: rows.length > limit && boundary ? encodeCursor(snapshot, boundary.id, boundary.timestamp) : null,
     };
   }
 
   // 展开某条消息的前后文（时间正序）。
+  // 注意：Tulpa 的 get_context radius 上限是 8（0~8），这里把 before/after 收敛到 8 内，
+  // 避免 radius 超限被 Tulpa 拒绝（isError → "Tulpa rejected get_context"）。
   async messageContext(args: { id: number; before?: number; after?: number; }) {
     const { id } = args;
-    const before = number(args.before, 16);
-    const after = number(args.after, 16);
+    const before = number(args.before, 8, 8);
+    const after = number(args.after, 8, 8);
     const snapshot = await this.scope();
     await this.get(id, snapshot);
     const r = await this.t.call('get_context', { message_id: id, radius: Math.max(before, after), snapshot_max_id: snapshot });
@@ -172,6 +176,71 @@ function createHistoryTools(
     output,
     async execute(args: any) { return run(name, args); },
   }));
+}
+
+// ---- 从 SQL 行直接构建消息（避免逐条 get_context 触发 Tulpa 限流） ----
+
+// agent_messages 表可直接读出的列（SELECT 顺序固定，见 sql()）。
+interface SqlRow {
+  id: number;
+  timestamp: number;
+  sender_id: string;
+  sender: string;
+  content: string;
+  platform: string;
+  conversation_id: string;
+  has_media: boolean;
+  has_voice: boolean;
+  has_file: boolean;
+}
+
+// 与 get_context 的正文折叠长度保持一致：超过该长度的正文在列表里折叠，
+// 由 qqtool_get_message 展开全文（省 token）。
+const CONTENT_FOLD = 2000;
+
+// 毫秒时间戳 → 北京时间字符串（无时区后缀，匹配 cleanTime 的约定）。
+function formatBeijingTime(ms: number): string {
+  const d = new Date(ms + 8 * 3600_000);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
+}
+
+function toSqlRow(r: any[]): SqlRow {
+  return {
+    id: Number(r[0]),
+    timestamp: Number(r[1]),
+    sender_id: String(r[2] ?? ''),
+    sender: String(r[3] ?? ''),
+    content: String(r[4] ?? ''),
+    platform: String(r[5] ?? ''),
+    conversation_id: String(r[6] ?? ''),
+    has_media: Number(r[7]) === 1,
+    has_voice: Number(r[8]) === 1,
+    has_file: Number(r[9]) === 1,
+  };
+}
+
+// SQL 行 → RawMessage（再交给 purifyMessage 收敛成精简结构）。
+// 媒体元数据（kind/index）不在 agent_messages 表里，这里按 has_media/has_file
+// 给一个粗粒度提示（index 恒为 0）；模型需要精确 kind / 多图 index 时可用
+// qqtool_get_message 读完整元数据。语音消息 content 为 [语音消息] 占位，无需 media 提示。
+function sqlRowToRaw(row: SqlRow): RawMessage {
+  const full = row.content;
+  const truncated = full.length > CONTENT_FOLD;
+  const media: unknown[] = [];
+  if (row.has_file) media.push({ kind: 'file', index: 0 });
+  else if (row.has_media) media.push({ kind: 'image', index: 0 });
+  return {
+    id: row.id,
+    time: formatBeijingTime(row.timestamp),
+    sender: row.sender,
+    sender_id: row.sender_id,
+    content: truncated ? full.slice(0, CONTENT_FOLD) : full,
+    ...(truncated ? { truncated: true } : {}),
+    ...(media.length ? { media } : {}),
+    platform: row.platform,
+    conversation_id: row.conversation_id,
+  };
 }
 
 const quote = (x: unknown) => `'${String(x).replaceAll("'", "''")}'`;
